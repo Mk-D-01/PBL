@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MapGen Engine — Campus Locator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🗺️ MapGen Engine — Campus Locator &amp; Navigation</h1>
+  <div id="authBox">
+    <span id="whoami">guest</span>
+    <form id="loginForm">
+      <input id="loginUser" placeholder="username" autocomplete="username">
+      <input id="loginPass" type="password" placeholder="password" autocomplete="current-password">
+      <button type="submit">Log in</button>
+    </form>
+    <button id="logoutBtn" class="hidden">Log out</button>
+  </div>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <section class="panel">
+      <h2>Search</h2>
+      <input id="searchBox" placeholder="Search locations… (e.g. lib)">
+      <ul id="searchResults" class="results"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Find Route</h2>
+      <label>From <input id="routeFrom" placeholder="MainGate"></label>
+      <label>To <input id="routeTo" placeholder="Hostel-A"></label>
+      <div class="row">
+        <label><input type="radio" name="metric" value="distance" checked> shortest distance</label>
+        <label><input type="radio" name="metric" value="hops"> fewest stops</label>
+      </div>
+      <button id="routeBtn">Find Route</button>
+      <div id="routeResult"></div>
+    </section>
+
+    <section class="panel admin hidden" id="adminPanel">
+      <h2>Admin</h2>
+
+      <h3>Map Designer</h3>
+      <div class="row" id="modeBar">
+        <button id="modeView" class="mode active">🖐 Pan</button>
+        <button id="modePlace" class="mode">📍 Place</button>
+        <button id="modeConnect" class="mode">🔗 Connect</button>
+      </div>
+      <div id="modeHint" class="muted small">Pan mode: drag to move the map, scroll to zoom.</div>
+
+      <h3>Add Location</h3>
+      <label>Name <input id="locName"></label>
+      <div class="row">
+        <label>Type
+          <select id="locType">
+            <option value="F">Facility</option>
+            <option value="B">Building</option>
+            <option value="G">Gate</option>
+          </select>
+        </label>
+        <label>Detail <input id="locDetail" placeholder="service/floors"></label>
+      </div>
+      <div class="row">
+        <label>X <input id="locX" type="number" value="30" min="0"></label>
+        <label>Y <input id="locY" type="number" value="10" min="0"></label>
+      </div>
+      <button id="addLocBtn">Add</button>
+      <div class="muted small">Tip: with <b>Place</b> mode, click the map to drop this location there.</div>
+
+      <h3>Add Connection</h3>
+      <div class="row">
+        <label>From id <input id="connFrom" type="number" min="0"></label>
+        <label>To id <input id="connTo" type="number" min="0"></label>
+        <label>m <input id="connDist" type="number" value="50" min="1"></label>
+      </div>
+      <label>Label <input id="connLabel" placeholder="walkway"></label>
+      <div class="row">
+        <button id="addConnBtn">Connect</button>
+        <button id="delConnBtn" class="danger">Disconnect</button>
+      </div>
+
+      <h3>Selected</h3>
+      <div id="selectedInfo" class="muted">Click a location on the map…</div>
+      <div class="row">
+        <button id="renameBtn" disabled>Rename</button>
+        <button id="moveBtn" disabled>Move</button>
+        <button id="deleteLocBtn" class="danger" disabled>Delete</button>
+      </div>
+
+      <h3>Reset</h3>
+      <button id="generateBtn">Generate default campus</button>
+    </section>
+
+    <section class="panel">
+      <h2>Campus info</h2>
+      <button id="infoBtn">Refresh info</button>
+      <pre id="infoOut" class="muted small"></pre>
+    </section>
+  </aside>
+
+  <section id="mapPane">
+    <canvas id="mapCanvas" width="960" height="620"></canvas>
+    <div id="mapHint">Click a circle to select a location · drag empty space to pan · scroll to zoom</div>
+    <div id="modeBadge" class="hidden"></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

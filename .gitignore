@@ -1,0 +1,14 @@
+# Build artifacts
+*.o
+*.obj
+mapgen
+mapgen.exe
+mapgen_web
+mapgen_web.exe
+mapgen_tests
+mapgen_tests.exe
+mapgen_web_tests
+mapgen_web_tests.exe
+build/
+bin/
+*.log
