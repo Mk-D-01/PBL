@@ -65,6 +65,9 @@ std::string newToken(int& counter) {
     return ss.str();
 }
 
+// The map that exists even before anything is saved: the generated campus.
+constexpr const char* kBuiltinName = "default";
+
 struct Account {
     const char* username;
     const char* password;
@@ -78,9 +81,27 @@ constexpr Account kAccounts[] = {
 
 }  // namespace
 
-ApiController::ApiController() {
-    // Start with the default campus loaded so the map is never empty.
-    campus::MapGenerator::generate(map_);
+ApiController::ApiController(std::string mapsDir) : store_(std::move(mapsDir)) {
+    map_ = std::make_unique<campus::CampusMap>();
+    // A saved "default" map wins, so edits survive a restart; otherwise seed the
+    // built-in campus so the map is never empty.
+    std::string error;
+    if (store_.exists(activeName_) && activateSavedMap(activeName_, error)) return;
+    if (!error.empty()) {
+        std::printf("[maps] could not load '%s': %s - using the built-in campus\n",
+                    activeName_.c_str(), error.c_str());
+        std::fflush(stdout);
+    }
+    campus::MapGenerator::generate(*map_);
+}
+
+bool ApiController::activateSavedMap(const std::string& name, std::string& error) {
+    auto fresh = std::make_unique<campus::CampusMap>();
+    if (!store_.load(name, *fresh, error)) return false;
+    map_ = std::move(fresh);
+    activeName_ = name;
+    dirty_ = false;
+    return true;
 }
 
 HttpResponse ApiController::handle(const HttpRequest& request) {
@@ -98,6 +119,12 @@ HttpResponse ApiController::handle(const HttpRequest& request) {
     if (path == "/api/route" && method == "GET") return apiRoute(request);
     if (path == "/api/info" && method == "GET") return apiInfo();
     if (path == "/api/traverse" && method == "GET") return apiTraverse(request);
+    if (path == "/api/maps" && method == "GET") return apiMaps();
+
+    // ---- map management (admin only, checked inside) ----
+    if (path == "/api/maps" && method == "POST") return apiCreateMap(request);
+    if (path == "/api/maps/select" && method == "POST") return apiSelectMap(request);
+    if (path == "/api/maps/save" && method == "POST") return apiSaveMap(request);
 
     // ---- admin endpoints (must be authenticated, and PUT/POST must not
     // fall through into each other) ----
@@ -175,9 +202,15 @@ HttpResponse ApiController::handleLogin(const HttpRequest& request) {
             ok.members.put("role", Json::makeString(account.role == Role::Admin ? "admin" : "user"));
             HttpResponse resp = HttpResponse::json(200, ok.dump());
             resp.setCookie = "session=" + token + "; Path=/; HttpOnly";
+            std::printf("[login] OK     user='%s' role=%s\n", username.c_str(),
+                        account.role == Role::Admin ? "admin" : "user");
+            std::fflush(stdout);
             return resp;
         }
     }
+    // Log the attempt but never the password itself (only its length).
+    std::printf("[login] FAILED user='%s' password_length=%zu\n", username.c_str(), password.size());
+    std::fflush(stdout);
     return HttpResponse::error(401, "invalid credentials");
 }
 
@@ -206,11 +239,22 @@ HttpResponse ApiController::handleWhoami(const HttpRequest& request) {
 HttpResponse ApiController::apiMap() {
     Json obj = Json::makeObject();
     Json locs = Json::makeArray();
-    for (const Location* loc : map_.allLocations()) {
+    for (const Location* loc : map_->allLocations()) {
         locs.items.pushBack(locationJson(loc));
     }
     obj.members.put("locations", locs);
-    obj.members.put("connections", connectionsJson(map_));
+    obj.members.put("connections", connectionsJson(*map_));
+    obj.members.put("name", Json::makeString(activeName_));
+    obj.members.put("width", Json::makeNumber(map_->width()));
+    obj.members.put("height", Json::makeNumber(map_->height()));
+    // The area locations may occupy; coordinates outside it are clamped by the engine.
+    Json bounds = Json::makeObject();
+    bounds.members.put("minX", Json::makeNumber(map_->minX()));
+    bounds.members.put("maxX", Json::makeNumber(map_->maxX()));
+    bounds.members.put("minY", Json::makeNumber(map_->minY()));
+    bounds.members.put("maxY", Json::makeNumber(map_->maxY()));
+    obj.members.put("bounds", bounds);
+    obj.members.put("dirty", Json::makeBool(dirty_));
     return HttpResponse::json(200, obj.dump());
 }
 
@@ -220,10 +264,10 @@ HttpResponse ApiController::apiSearch(const HttpRequest& request) {
 
     Json arr = Json::makeArray();
     // Exact name match first (short-circuit result).
-    const Location* exact = map_.searchByName(query);
+    const Location* exact = map_->searchByName(query);
     if (exact != nullptr) arr.items.pushBack(locationJson(exact));
     // Then keyword matches (skip the exact duplicate).
-    for (const Location* loc : map_.searchByKeyword(query)) {
+    for (const Location* loc : map_->searchByKeyword(query)) {
         if (exact != nullptr && loc->id() == exact->id()) continue;
         arr.items.pushBack(locationJson(loc));
     }
@@ -240,24 +284,24 @@ HttpResponse ApiController::apiRoute(const HttpRequest& request) {
     std::string metric = request.queryParam("metric");
     if (metric.empty()) metric = "distance";
 
-    const Location* src = map_.searchByName(from);
-    const Location* dst = map_.searchByName(to);
+    const Location* src = map_->searchByName(from);
+    const Location* dst = map_->searchByName(to);
     // Fall back to numeric ids when names are not found.
     if (src == nullptr) {
         try {
-            src = map_.findLocation(std::stoi(from));
+            src = map_->findLocation(std::stoi(from));
         } catch (...) {}
     }
     if (dst == nullptr) {
         try {
-            dst = map_.findLocation(std::stoi(to));
+            dst = map_->findLocation(std::stoi(to));
         } catch (...) {}
     }
     if (src == nullptr || dst == nullptr) {
         return HttpResponse::error(404, "source or destination not found");
     }
 
-    campus::Navigation nav(map_);
+    campus::Navigation nav(*map_);
     Route route = (metric == "hops") ? nav.shortestRouteByHops(src->id(), dst->id())
                                      : nav.shortestRouteByDistance(src->id(), dst->id());
     bool exists = nav.pathExists(src->id(), dst->id());
@@ -268,14 +312,14 @@ HttpResponse ApiController::apiRoute(const HttpRequest& request) {
     obj.members.put("metric", Json::makeString(metric == "hops" ? "hops" : "distance"));
     obj.members.put("totalDistance", Json::makeNumber(route.totalDistance));
     obj.members.put("hops", Json::makeNumber(route.hops));
-    obj.members.put("path", pathJson(map_, route));
+    obj.members.put("path", pathJson(*map_, route));
     return HttpResponse::json(200, obj.dump());
 }
 
 HttpResponse ApiController::apiInfo() {
     Json obj = Json::makeObject();
-    obj.members.put("info", Json::makeString(map_.campusInfo()));
-    obj.members.put("adjacency", Json::makeString(map_.adjacencyReport()));
+    obj.members.put("info", Json::makeString(map_->campusInfo()));
+    obj.members.put("adjacency", Json::makeString(map_->adjacencyReport()));
     return HttpResponse::json(200, obj.dump());
 }
 
@@ -284,20 +328,20 @@ HttpResponse ApiController::apiTraverse(const HttpRequest& request) {
     std::string order = request.queryParam("order");
     if (order.empty()) order = "bfs";
 
-    const Location* src = map_.searchByName(from);
+    const Location* src = map_->searchByName(from);
     if (src == nullptr) {
         try {
-            src = map_.findLocation(std::stoi(from));
+            src = map_->findLocation(std::stoi(from));
         } catch (...) {}
     }
     if (src == nullptr) return HttpResponse::error(404, "source not found");
 
-    campus::Navigation nav(map_);
+    campus::Navigation nav(*map_);
     ds::DynamicArray<int> visit = (order == "dfs") ? nav.traverseDFS(src->id()) : nav.traverseBFS(src->id());
 
     Json arr = Json::makeArray();
     for (int id : visit) {
-        const Location* loc = map_.findLocation(id);
+        const Location* loc = map_->findLocation(id);
         if (loc != nullptr) arr.items.pushBack(Json::makeString(loc->name()));
     }
     Json obj = Json::makeObject();
@@ -309,11 +353,12 @@ HttpResponse ApiController::apiTraverse(const HttpRequest& request) {
 HttpResponse ApiController::apiGenerate(const HttpRequest& request) {
     HttpResponse denied;
     if (requireAdmin(request, denied) == nullptr) return denied;
-    campus::MapGenerator::generate(map_);
+    campus::MapGenerator::generate(*map_);
+    dirty_ = true;
     Json ok = Json::makeObject();
     ok.members.put("ok", Json::makeBool(true));
-    ok.members.put("locations", Json::makeNumber(map_.locationCount()));
-    ok.members.put("connections", Json::makeNumber(map_.edgeCount()));
+    ok.members.put("locations", Json::makeNumber(map_->locationCount()));
+    ok.members.put("connections", Json::makeNumber(map_->edgeCount()));
     return HttpResponse::json(200, ok.dump());
 }
 
@@ -339,8 +384,9 @@ HttpResponse ApiController::apiAddLocation(const HttpRequest& request) {
         kind = LocationType::Gate;
     }
 
-    int id = map_.addLocation(name, kind, x, y, detail);
+    int id = map_->addLocation(name, kind, x, y, detail);
     if (id < 0) return HttpResponse::error(400, "could not add location (duplicate name?)");
+    dirty_ = true;
 
     Json ok = Json::makeObject();
     ok.members.put("ok", Json::makeBool(true));
@@ -360,12 +406,13 @@ HttpResponse ApiController::apiUpdateLocation(const HttpRequest& request, bool i
     bool okAny = false;
     std::string newName = body.getString("name");
     if (!newName.empty()) {
-        okAny = map_.updateLocation(id, newName) || okAny;
+        okAny = map_->updateLocation(id, newName) || okAny;
     }
     if (body.get("x") != nullptr && body.get("y") != nullptr) {
-        okAny = map_.updateLocation(id, body.getInt("x"), body.getInt("y")) || okAny;
+        okAny = map_->updateLocation(id, body.getInt("x"), body.getInt("y")) || okAny;
     }
     if (!okAny) return HttpResponse::error(400, "nothing updated (bad id or name taken)");
+    dirty_ = true;
 
     Json ok = Json::makeObject();
     ok.members.put("ok", Json::makeBool(true));
@@ -376,9 +423,10 @@ HttpResponse ApiController::apiDeleteLocation(const HttpRequest& request, int id
     (void)idFromPath;
     HttpResponse denied;
     if (requireAdmin(request, denied) == nullptr) return denied;
-    if (!map_.removeLocation(idFromPath)) {
+    if (!map_->removeLocation(idFromPath)) {
         return HttpResponse::error(404, "location not found");
     }
+    dirty_ = true;
     Json ok = Json::makeObject();
     ok.members.put("ok", Json::makeBool(true));
     return HttpResponse::json(200, ok.dump());
@@ -395,9 +443,10 @@ HttpResponse ApiController::apiAddConnection(const HttpRequest& request) {
     std::string label = body.getString("label");
     if (fromId < 0 || toId < 0) return HttpResponse::error(400, "from and to are required");
 
-    if (!map_.connect(fromId, toId, distance, label)) {
+    if (!map_->connect(fromId, toId, distance, label)) {
         return HttpResponse::error(400, "could not connect (bad ids or duplicate edge)");
     }
+    dirty_ = true;
     Json ok = Json::makeObject();
     ok.members.put("ok", Json::makeBool(true));
     return HttpResponse::json(201, ok.dump());
@@ -411,7 +460,7 @@ HttpResponse ApiController::apiDeleteConnection(const HttpRequest& request) {
     if (fromStr.empty() || toStr.empty()) return HttpResponse::error(400, "from and to are required");
 
     int fromId = -1, toId = -1;
-    const Location* src = map_.searchByName(fromStr);
+    const Location* src = map_->searchByName(fromStr);
     if (src != nullptr) {
         fromId = src->id();
     } else {
@@ -419,7 +468,7 @@ HttpResponse ApiController::apiDeleteConnection(const HttpRequest& request) {
             fromId = std::stoi(fromStr);
         } catch (...) {}
     }
-    const Location* dst = map_.searchByName(toStr);
+    const Location* dst = map_->searchByName(toStr);
     if (dst != nullptr) {
         toId = dst->id();
     } else {
@@ -427,10 +476,146 @@ HttpResponse ApiController::apiDeleteConnection(const HttpRequest& request) {
             toId = std::stoi(toStr);
         } catch (...) {}
     }
-    if (!map_.disconnect(fromId, toId)) return HttpResponse::error(404, "connection not found");
+    if (!map_->disconnect(fromId, toId)) return HttpResponse::error(404, "connection not found");
+    dirty_ = true;
 
     Json ok = Json::makeObject();
     ok.members.put("ok", Json::makeBool(true));
+    return HttpResponse::json(200, ok.dump());
+}
+
+// ------------------------------------------------------------------- maps
+
+HttpResponse ApiController::apiMaps() {
+    ds::DynamicArray<std::string> names = store_.list();
+    // Always offer the built-in campus and the active map, even when neither is saved yet.
+    for (const std::string& extra : {std::string(kBuiltinName), activeName_}) {
+        bool listed = false;
+        for (const std::string& name : names) listed = listed || name == extra;
+        if (listed) continue;
+        std::size_t pos = 0;
+        while (pos < names.size() && names[pos] < extra) ++pos;
+        names.insertAt(pos, extra);
+    }
+
+    Json arr = Json::makeArray();
+    for (const std::string& name : names) {
+        Json entry = Json::makeObject();
+        entry.members.put("name", Json::makeString(name));
+        entry.members.put("saved", Json::makeBool(store_.exists(name)));
+        arr.items.pushBack(entry);
+    }
+    Json obj = Json::makeObject();
+    obj.members.put("active", Json::makeString(activeName_));
+    obj.members.put("dirty", Json::makeBool(dirty_));
+    obj.members.put("maps", arr);
+    return HttpResponse::json(200, obj.dump());
+}
+
+HttpResponse ApiController::apiCreateMap(const HttpRequest& request) {
+    HttpResponse denied;
+    if (requireAdmin(request, denied) == nullptr) return denied;
+    Json body;
+    if (!Json::parse(request.body, body)) return HttpResponse::error(400, "invalid JSON body");
+
+    const std::string name = body.getString("name");
+    const int width = body.getInt("width", campus::CampusMap::GRID_WIDTH);
+    const int height = body.getInt("height", campus::CampusMap::GRID_HEIGHT);
+    if (!MapStore::validName(name)) {
+        return HttpResponse::error(400, "invalid map name (letters, digits, '_' or '-', up to 40 characters)");
+    }
+    if (name == activeName_ || name == kBuiltinName || store_.exists(name)) {
+        return HttpResponse::error(400, "a map with that name already exists");
+    }
+
+    auto fresh = std::make_unique<campus::CampusMap>();
+    if (!fresh->reset(width, height)) {
+        return HttpResponse::error(
+            400, "size must be " + std::to_string(campus::CampusMap::MIN_WIDTH) + "-" +
+                     std::to_string(campus::CampusMap::MAX_WIDTH) + " wide and " +
+                     std::to_string(campus::CampusMap::MIN_HEIGHT) + "-" +
+                     std::to_string(campus::CampusMap::MAX_HEIGHT) + " high");
+    }
+    // Save the empty map right away so it shows up in the dropdown and survives a restart.
+    std::string error;
+    if (!store_.save(name, *fresh, error)) return HttpResponse::error(500, error);
+
+    map_ = std::move(fresh);
+    activeName_ = name;
+    dirty_ = false;
+    std::printf("[maps] created '%s' (%dx%d)\n", name.c_str(), width, height);
+    std::fflush(stdout);
+
+    Json ok = Json::makeObject();
+    ok.members.put("ok", Json::makeBool(true));
+    ok.members.put("name", Json::makeString(name));
+    return HttpResponse::json(201, ok.dump());
+}
+
+HttpResponse ApiController::apiSelectMap(const HttpRequest& request) {
+    HttpResponse denied;
+    if (requireAdmin(request, denied) == nullptr) return denied;
+    Json body;
+    if (!Json::parse(request.body, body)) return HttpResponse::error(400, "invalid JSON body");
+
+    const std::string name = body.getString("name");
+    if (!MapStore::validName(name)) return HttpResponse::error(400, "invalid map name");
+    // Re-selecting the active map keeps the in-memory edits instead of reloading from disk.
+    if (name != activeName_) {
+        if (store_.exists(name)) {
+            std::string error;
+            if (!activateSavedMap(name, error)) return HttpResponse::error(400, error);
+        } else if (name == kBuiltinName) {
+            // Never saved (or file removed): rebuild the built-in campus.
+            auto fresh = std::make_unique<campus::CampusMap>();
+            campus::MapGenerator::generate(*fresh);
+            map_ = std::move(fresh);
+            activeName_ = name;
+            dirty_ = false;
+        } else {
+            return HttpResponse::error(404, "map not found");
+        }
+        std::printf("[maps] switched to '%s'\n", name.c_str());
+        std::fflush(stdout);
+    }
+
+    Json ok = Json::makeObject();
+    ok.members.put("ok", Json::makeBool(true));
+    ok.members.put("name", Json::makeString(activeName_));
+    return HttpResponse::json(200, ok.dump());
+}
+
+HttpResponse ApiController::apiSaveMap(const HttpRequest& request) {
+    HttpResponse denied;
+    if (requireAdmin(request, denied) == nullptr) return denied;
+
+    // Optional {"name": "..."} saves under a new name ("Save As"); otherwise the active name.
+    std::string target = activeName_;
+    if (!request.body.empty()) {
+        Json body;
+        if (!Json::parse(request.body, body)) return HttpResponse::error(400, "invalid JSON body");
+        const std::string requested = body.getString("name");
+        if (!requested.empty()) target = requested;
+    }
+    if (!MapStore::validName(target)) {
+        return HttpResponse::error(400, "invalid map name (letters, digits, '_' or '-', up to 40 characters)");
+    }
+    // Never silently overwrite a different saved map.
+    if (target != activeName_ && store_.exists(target)) {
+        return HttpResponse::error(400, "a map with that name already exists");
+    }
+
+    std::string error;
+    if (!store_.save(target, *map_, error)) return HttpResponse::error(500, error);
+    activeName_ = target;
+    dirty_ = false;
+    std::printf("[maps] saved '%s' (%d locations, %d connections)\n", target.c_str(),
+                map_->locationCount(), map_->edgeCount());
+    std::fflush(stdout);
+
+    Json ok = Json::makeObject();
+    ok.members.put("ok", Json::makeBool(true));
+    ok.members.put("name", Json::makeString(target));
     return HttpResponse::json(200, ok.dump());
 }
 

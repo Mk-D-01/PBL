@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "CampusMap.hpp"
@@ -7,6 +8,7 @@
 #include "Navigation.hpp"
 #include "web/HttpServer.hpp"
 #include "web/Json.hpp"
+#include "web/MapStore.hpp"
 #include "data_structures/HashMap.hpp"
 
 namespace web {
@@ -25,7 +27,8 @@ struct WebSession {
 // synchronization is needed.
 class ApiController {
 public:
-    ApiController();
+    // `mapsDir` is where saved maps live (one <name>.json each).
+    explicit ApiController(std::string mapsDir = "maps");
 
     // Main dispatch entry passed to HttpServer.
     HttpResponse handle(const HttpRequest& request);
@@ -53,12 +56,26 @@ private:
     HttpResponse apiAddConnection(const HttpRequest& request);
     HttpResponse apiDeleteConnection(const HttpRequest& request);
 
+    // ---- maps (list is public; create/select/save are admin-only) ----
+    HttpResponse apiMaps();
+    HttpResponse apiCreateMap(const HttpRequest& request);
+    HttpResponse apiSelectMap(const HttpRequest& request);
+    HttpResponse apiSaveMap(const HttpRequest& request);
+
     // ---- helpers ----
+    // Loads a saved map into a fresh CampusMap and, only if that fully succeeds, makes
+    // it the active one (activeName_ = name, dirty_ = false). On failure nothing changes.
+    bool activateSavedMap(const std::string& name, std::string& error);
     // 401/403 JSON error when the caller is not an admin; nullptr otherwise
     // (and the session is returned through `out`).
     const WebSession* requireAdmin(const HttpRequest& request, HttpResponse& errorOut) const;
 
-    campus::CampusMap map_;
+    // The one map every client sees (global). A pointer so a freshly loaded map can
+    // replace it atomically: CampusMap itself is non-copyable.
+    std::unique_ptr<campus::CampusMap> map_;
+    MapStore store_;
+    std::string activeName_ = "default";  // name the active map saves under
+    bool dirty_ = false;                  // edited since the last load/save?
     campus::MapGenerator generator_;
     ds::HashMap<std::string, WebSession> sessions_;  // token -> session
     int nextToken_ = 1;

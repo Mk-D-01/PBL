@@ -28,7 +28,9 @@ ds::DynamicArray<int> buildPath(const ds::HashMap<int, int>& parent, int destina
 }  // namespace
 
 bool Navigation::valid(int id) const {
-    return id >= 0 && id < map_.locationCount();
+    // Ids are slot indices (removed slots stay as nullptr), so ask the map itself:
+    // comparing with the live count wrongly rejects the highest ids after a deletion.
+    return map_.findLocation(id) != nullptr;
 }
 
 // ------------------------------------------------------------ BFS (fewest hops)

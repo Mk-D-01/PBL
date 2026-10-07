@@ -284,6 +284,41 @@ void testNavigation() {
     require(!sparseNav.shortestRouteByDistance(s1, s2).reachable,
             "Dijkstra unreachable after disconnect");
     require(nav.traverseBFS(mainGate).size() == 12, "BFS order stable after queries");
+
+    // Regression: ids are slot indices, so after deleting a low id the highest id is
+    // still valid even though it is >= the live location count.
+    campus::CampusMap gap;
+    const int g0 = gap.addLocation("G0", campus::LocationType::Building, 3, 3, "1");
+    const int g1 = gap.addLocation("G1", campus::LocationType::Building, 8, 3, "1");
+    const int g2 = gap.addLocation("G2", campus::LocationType::Building, 12, 3, "1");
+    gap.connect(g0, g2, 10, "");
+    gap.removeLocation(g1);  // live count 2, but id 2 is still in use
+    const campus::Navigation gapNav(gap);
+    require(gapNav.shortestRouteByDistance(g0, g2).reachable, "route to highest id works after a deletion");
+    require(gapNav.pathExists(g0, g2), "pathExists to highest id works after a deletion");
+    require(!gapNav.pathExists(g0, g1), "removed id is not routable");
+}
+
+// ---------------------------------------------------------------- map size
+
+void testMapSize() {
+    campus::CampusMap map;
+    require(map.width() == campus::CampusMap::GRID_WIDTH && map.height() == campus::CampusMap::GRID_HEIGHT,
+            "default map keeps the 62x20 size");
+
+    require(map.reset(100, 40) && map.width() == 100 && map.height() == 40, "reset resizes the map");
+    require(!map.reset(5, 40) && map.width() == 100, "reset rejects a too-small width and changes nothing");
+    require(!map.reset(100, 500) && map.height() == 40, "reset rejects a too-tall height and changes nothing");
+
+    const int id = map.addLocation("Far", campus::LocationType::Facility, 500, 500, "x");
+    const campus::Location* far = map.findLocation(id);
+    require(far != nullptr && far->x() == map.maxX() && far->y() == map.maxY(),
+            "coordinates clamp to the map's own bounds");
+    require(map.maxX() == 97 && map.maxY() == 38, "bounds follow the map size");
+
+    require(map.reset(30, 12) && map.locationCount() == 0, "reset clears the map");
+    require(map.renderMap().find("+------------------------------+") != std::string::npos,
+            "renderMap uses the new width");
 }
 
 // ---------------------------------------------------------------- menu (scripted)
@@ -342,6 +377,7 @@ int runAllTests() {
     testMapOperations();
     testMapGenerator();
     testNavigation();
+    testMapSize();
     testMenuScripted();
 
     std::printf("\n%d checks, %d failed\n", checksRun, checksFailed);

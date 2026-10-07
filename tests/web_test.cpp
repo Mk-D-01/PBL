@@ -5,6 +5,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <chrono>
@@ -125,7 +127,10 @@ std::string headerValue(const std::string& response, const std::string& name) {
 
 int main() {
     // Run the server on a background thread, like a real deployment.
-    web::ApiController controller;
+    // Saved maps go to a throw-away directory so the tests never touch the real maps/.
+    const std::string kMapsDir = "maps_test_tmp";
+    std::filesystem::remove_all(kMapsDir);
+    web::ApiController controller(kMapsDir);
     web::HttpServer server(kPort, "web",
                            [&controller](const web::HttpRequest& request) {
                                return controller.handle(request);
@@ -170,6 +175,9 @@ int main() {
     CHECK(resp.find("\"admin\"") != std::string::npos, "whoami reports admin role");
     resp = bodyOf(http("GET", "/api/whoami"));
     CHECK(resp.find("guest") != std::string::npos, "whoami without cookie is guest");
+    // Regression: browsers send "a=1; session=..." (cookies on localhost are shared across ports).
+    resp = bodyOf(http("GET", "/api/whoami", "", "other=1; " + adminCookie));
+    CHECK(resp.find("\"admin\"") != std::string::npos, "session cookie found after another cookie");
 
     // ---- read-only endpoints ----
     resp = bodyOf(http("GET", "/api/map"));
@@ -245,12 +253,111 @@ int main() {
     resp = bodyOf(http("POST", "/api/generate", "", adminCookie));
     CHECK(resp.find("\"ok\":true") != std::string::npos, "admin regenerates the campus");
 
+    // ---- multiple maps: list, create, save, switch ----
+    auto has = [](const std::string& text, const std::string& piece) {
+        return text.find(piece) != std::string::npos;
+    };
+    resp = bodyOf(http("GET", "/api/maps"));
+    CHECK(has(resp, "\"active\":\"default\"") && has(resp, "\"saved\":false"),
+          "map list is public and shows the unsaved default map");
+
+    http("POST", "/api/maps", R"({"name":"x"})", "", &statusLine);
+    CHECK(has(statusLine, "401"), "create map without login is 401");
+    http("POST", "/api/maps/select", R"({"name":"default"})", userCookie, &statusLine);
+    CHECK(has(statusLine, "403"), "select map as user is 403");
+    http("POST", "/api/maps/save", "", userCookie, &statusLine);
+    CHECK(has(statusLine, "403"), "save map as user is 403");
+
+    // The built-in default must be saved first, or switching away would lose it.
+    resp = bodyOf(http("POST", "/api/maps/save", "", adminCookie));
+    CHECK(has(resp, "\"ok\":true") && has(resp, "\"name\":\"default\""), "admin saves the default map");
+    CHECK(std::filesystem::exists(kMapsDir + "/default.json"), "save writes maps/<name>.json");
+
+    // Names become file names: path tricks and reserved device names must be refused.
+    http("POST", "/api/maps", R"({"name":"../evil","width":40,"height":15})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "map name with path characters is rejected");
+    http("POST", "/api/maps", R"({"name":"CON","width":40,"height":15})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "reserved device map name is rejected");
+    http("POST", "/api/maps", R"({"name":"default","width":40,"height":15})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "duplicate map name is rejected");
+    http("POST", "/api/maps", R"({"name":"huge","width":5000,"height":15})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "oversized map is rejected");
+    CHECK(!std::filesystem::exists("evil.json") && !std::filesystem::exists("huge.json"),
+          "rejected names create no files");
+
+    resp = bodyOf(http("POST", "/api/maps", R"({"name":"scratch","width":40,"height":15})", adminCookie));
+    CHECK(has(resp, "\"ok\":true"), "admin creates a map from scratch");
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"name\":\"scratch\"") && has(resp, "\"width\":40") && has(resp, "\"height\":15") &&
+              has(resp, "\"locations\":[]"),
+          "new map is active, empty and has the requested size");
+
+    // Coordinates are clamped to the map's own size (40 wide -> maxX 37), not the old 62.
+    http("POST", "/api/locations", R"({"name":"A","type":"F","detail":"a","x":10,"y":5})", adminCookie);
+    http("POST", "/api/locations", R"({"name":"B","type":"F","detail":"b","x":20,"y":5})", adminCookie);
+    http("POST", "/api/locations", R"({"name":"C","type":"B","detail":"3","x":100,"y":5})", adminCookie);
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"x\":37"), "coordinates clamp to the active map's width");
+    resp = bodyOf(http("GET", "/api/maps"));
+    CHECK(has(resp, "\"dirty\":true"), "edits mark the map dirty");
+
+    http("POST", "/api/connections", R"({"from":0,"to":2,"d":50,"label":"walk"})", adminCookie);
+    http("DELETE", "/api/locations/1", "", adminCookie);  // leaves a hole at id 1
+    resp = bodyOf(http("POST", "/api/maps/save", "", adminCookie));
+    CHECK(has(resp, "\"ok\":true"), "admin saves the scratch map");
+    resp = bodyOf(http("GET", "/api/maps"));
+    CHECK(has(resp, "\"dirty\":false") && has(resp, "\"scratch\""), "saving clears dirty; map is listed");
+
+    http("POST", "/api/maps/save", R"({"name":"default"})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "Save As never overwrites a different map");
+
+    resp = bodyOf(http("POST", "/api/maps/select", R"({"name":"default"})", adminCookie));
+    CHECK(has(resp, "\"ok\":true"), "admin switches to the default map");
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"name\":\"default\"") && has(resp, "MainGate") && !has(resp, "\"name\":\"A\""),
+          "switching shows the other map's data");
+    resp = bodyOf(http("POST", "/api/maps/select", R"({"name":"scratch"})", adminCookie));
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"width\":40") && has(resp, "\"name\":\"A\"") && has(resp, "\"name\":\"C\"") &&
+              !has(resp, "\"name\":\"B\""),
+          "saved map reloads with its size and locations");
+    CHECK(has(resp, "\"id\":2"), "reload keeps ids stable across the deleted slot");
+    // Regression: ids {0,2} with only 2 live locations - the old Navigation::valid()
+    // compared ids to the live count and rejected id 2.
+    resp = bodyOf(http("GET", "/api/route?from=A&to=C&metric=distance"));
+    CHECK(has(resp, "\"reachable\":true"), "routing works after a deletion left a gap in ids");
+
+    // A corrupt file must be refused without disturbing the active map.
+    {
+        std::ofstream bad(kMapsDir + "/broken.json");
+        bad << "{ this is not json";
+    }
+    http("POST", "/api/maps/select", R"({"name":"broken"})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "corrupt map file is rejected");
+    resp = bodyOf(http("GET", "/api/maps"));
+    CHECK(has(resp, "\"active\":\"scratch\""), "failed switch keeps the active map");
+    http("POST", "/api/maps/select", R"({"name":"missing"})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "404"), "selecting an unknown map is 404");
+
+    // The built-in campus must stay reachable even if it was never saved (or its file is gone).
+    http("POST", "/api/maps/select", R"({"name":"scratch"})", adminCookie);
+    std::filesystem::remove(kMapsDir + "/default.json");
+    resp = bodyOf(http("GET", "/api/maps"));
+    CHECK(has(resp, "\"name\":\"default\""), "built-in default stays listed without a saved file");
+    http("POST", "/api/maps/select", R"({"name":"default"})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "200"), "built-in default can be selected without a saved file");
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "MainGate") && has(resp, "\"width\":62"), "selecting default rebuilds the built-in campus");
+
+    // Leave the default campus active for the remaining checks.
+
     // ---- logout ----
     resp = http("POST", "/logout", "", adminCookie);
     CHECK(bodyOf(resp).find("\"ok\":true") != std::string::npos, "logout works");
     resp = http("GET", "/api/whoami", "", adminCookie);
     CHECK(bodyOf(resp).find("guest") != std::string::npos, "session invalidated after logout");
 
+    std::filesystem::remove_all(kMapsDir);
     std::printf("\n%d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

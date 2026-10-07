@@ -11,7 +11,7 @@ if errorlevel 1 (
 set CXXFLAGS=-std=c++17 -O2 -Wall -Wextra -Iinclude
 set SRCS=src\CampusMap.cpp src\MapGenerator.cpp src\Navigation.cpp src\Menu.cpp
 
-set WEBSRCS=%SRCS% src\web\HttpServer.cpp src\web\Json.cpp src\web\ApiController.cpp
+set WEBSRCS=%SRCS% src\web\HttpServer.cpp src\web\Json.cpp src\web\ApiController.cpp src\web\MapStore.cpp
 
 REM Console app
 g++ %CXXFLAGS% src\main.cpp %SRCS% -o mapgen.exe

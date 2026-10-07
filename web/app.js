@@ -39,6 +39,26 @@ const TYPE_NAMES = { G: "Gate", B: "Building", F: "Facility" };
 const canvas = $("mapCanvas");
 const ctx = canvas.getContext("2d");
 
+// The canvas is stretched by CSS, so its on-screen size differs from its pixel size
+// (canvas.width/height). Mouse events are in screen pixels; all drawing/hit-test math
+// is in canvas pixels. Always go through canvasPos() so the two agree.
+function canvasPos(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left - canvas.clientLeft) * canvas.width / canvas.clientWidth,
+    y: (e.clientY - r.top - canvas.clientTop) * canvas.height / canvas.clientHeight,
+  };
+}
+
+// Keep the pixel buffer equal to the displayed size so nothing is stretched or blurry.
+function fitCanvas() {
+  if (canvas.clientWidth && canvas.clientHeight &&
+      (canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight)) {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+  }
+}
+
 // Campus world is roughly 62x20 grid units; pad and scale to fit.
 function worldToScreen(wx, wy) {
   const v = state.view;
@@ -60,6 +80,20 @@ function drawMap() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!state.map) return;
   const v = state.view;
+
+  // usable area: locations outside it are clamped by the server, so show where it ends
+  const b = state.map.bounds;
+  if (b) {
+    const tl = worldToScreen(b.minX - 0.5, b.minY - 0.5);
+    const br = worldToScreen(b.maxX + 0.5, b.maxY + 0.5);
+    ctx.fillStyle = "rgba(255,255,255,0.025)";
+    ctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = "#2a3345";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    ctx.setLineDash([]);
+  }
 
   // walkways
   ctx.strokeStyle = "#33415c";
@@ -123,8 +157,49 @@ function drawMap() {
 
 async function refreshMap() {
   state.map = await api("/api/map");
+  await refreshMapList();
   drawMap();
   $("infoOut").textContent = "";
+}
+
+// Rebuilds the header dropdown from the server and shows the unsaved-changes dot.
+async function refreshMapList() {
+  const r = await api("/api/maps");
+  const sel = $("mapSelect");
+  sel.innerHTML = "";
+  for (const m of r.maps) {
+    const opt = document.createElement("option");
+    opt.value = m.name;
+    opt.textContent = m.saved ? m.name : `${m.name} (unsaved)`;
+    sel.appendChild(opt);
+  }
+  sel.value = r.active;
+  state.mapName = r.active;
+  state.dirty = r.dirty;
+  $("mapDirty").classList.toggle("hidden", !r.dirty);
+}
+
+// Zoom/pan so the whole map is visible (maps can be anywhere from 20x10 to 200x100).
+function fitView() {
+  const m = state.map;
+  if (!m) return;
+  const contentW = 30 + 15 * m.width + 30;
+  const contentH = 25 + 15 * m.height + 25;
+  const zoom = Math.min(canvas.width / contentW, canvas.height / contentH);
+  state.view.zoom = Math.min(4, Math.max(0.1, zoom));
+  state.view.x = 0;
+  state.view.y = 0;
+  drawMap();
+}
+
+// Snap a world position into the area the server accepts, so what you see is what you get.
+function clampToBounds(x, y) {
+  const b = state.map && state.map.bounds;
+  if (!b) return { x: Math.max(0, x), y: Math.max(0, y) };
+  return {
+    x: Math.min(b.maxX, Math.max(b.minX, x)),
+    y: Math.min(b.maxY, Math.max(b.minY, y)),
+  };
 }
 
 function selectLocation(loc) {
@@ -199,6 +274,7 @@ async function whoami() {
     $("adminPanel").classList.toggle("hidden", r.role !== "admin");
     $("loginForm").classList.toggle("hidden", r.role !== "guest");
     $("logoutBtn").classList.toggle("hidden", r.role === "guest");
+    $("mapSelect").disabled = r.role !== "admin";  // the active map is global, so only admins switch it
     if (r.role !== "admin" && state.mode !== "view") setMode("view");
     selectLocation(state.selected);
   } catch { /* server offline */ }
@@ -222,6 +298,75 @@ $("logoutBtn").addEventListener("click", async () => {
   await api("/logout", { method: "POST" }).catch(() => {});
   await whoami();
 });
+
+/* ---------------- maps ---------------- */
+
+function mapMessage(text, isError) {
+  const el = $("mapMsg");
+  el.textContent = text;
+  el.className = isError ? "err small" : "muted small";
+}
+
+// Shows a freshly activated map: forget the old selection and fit it into view.
+async function showActiveMap() {
+  state.selected = null;
+  state.connectFrom = null;
+  await refreshMap();
+  fitView();
+  selectLocation(null);
+}
+
+function confirmDiscardUnsaved() {
+  return !state.dirty || confirm(`"${state.mapName}" has unsaved changes. Continue and lose them?`);
+}
+
+$("mapSelect").addEventListener("change", async (e) => {
+  const target = e.target.value;
+  if (!confirmDiscardUnsaved()) { e.target.value = state.mapName; return; }
+  try {
+    await api("/api/maps/select", { method: "POST", body: JSON.stringify({ name: target }) });
+    await showActiveMap();
+    mapMessage(`Switched to "${target}".`);
+  } catch (err) {
+    mapMessage(err.message, true);
+    await refreshMapList().catch(() => {});
+  }
+});
+
+$("createMapBtn").addEventListener("click", async () => {
+  if (!confirmDiscardUnsaved()) return;
+  const name = $("newMapName").value.trim();
+  const width = parseInt($("newMapW").value, 10);
+  const height = parseInt($("newMapH").value, 10);
+  try {
+    await api("/api/maps", { method: "POST", body: JSON.stringify({ name, width, height }) });
+    $("newMapName").value = "";
+    await showActiveMap();
+    mapMessage(`Created "${name}" (${width}x${height}). Use Place mode to add locations, then Save.`);
+  } catch (err) {
+    mapMessage(err.message, true);
+  }
+});
+
+async function saveMap(asName) {
+  try {
+    const body = asName ? JSON.stringify({ name: asName }) : undefined;
+    const r = await api("/api/maps/save", { method: "POST", body });
+    await refreshMap();
+    mapMessage(`Saved "${r.name}".`);
+  } catch (err) {
+    mapMessage(err.message, true);
+  }
+}
+
+$("saveMapBtn").addEventListener("click", () => saveMap(null));
+$("saveAsBtn").addEventListener("click", () => {
+  const name = $("newMapName").value.trim();
+  if (!name) { mapMessage("Type the new name in the Name box first.", true); return; }
+  saveMap(name).then(() => { $("newMapName").value = ""; });
+});
+
+$("fitBtn").addEventListener("click", fitView);
 
 /* ---------------- admin actions ---------------- */
 
@@ -315,23 +460,26 @@ $("infoBtn").addEventListener("click", async () => {
 });
 
 canvas.addEventListener("mousedown", (e) => {
-  const hit = hitTest(e.offsetX, e.offsetY);
+  const p = canvasPos(e);
+  const hit = hitTest(p.x, p.y);
   if (state.role === "admin" && hit) {
     // admins grab the location itself (drag to move, click to select/act)
     state.dragLoc = hit;
     state.dragMoved = false;
   } else {
     state.dragging = true;
-    state.dragStart = { x: e.offsetX, y: e.offsetY, vx: state.view.x, vy: state.view.y };
+    state.dragStart = { x: p.x, y: p.y, vx: state.view.x, vy: state.view.y };
   }
 });
 
 canvas.addEventListener("mousemove", (e) => {
-  state.mouse = { x: e.offsetX, y: e.offsetY };
+  const p = canvasPos(e);
+  state.mouse = { x: p.x, y: p.y };
   if (state.dragLoc) {
-    const w = screenToWorld(e.offsetX, e.offsetY);
-    state.dragLoc.x = Math.max(0, Math.round(w.x));
-    state.dragLoc.y = Math.max(0, Math.round(w.y));
+    const w = screenToWorld(p.x, p.y);
+    const c = clampToBounds(Math.round(w.x), Math.round(w.y));
+    state.dragLoc.x = c.x;
+    state.dragLoc.y = c.y;
     state.dragMoved = true;
     drawMap();
     return;
@@ -340,12 +488,13 @@ canvas.addEventListener("mousemove", (e) => {
     if (state.mode === "connect" && state.connectFrom) drawMap();
     return;
   }
-  state.view.x = state.dragStart.vx + (e.offsetX - state.dragStart.x);
-  state.view.y = state.dragStart.vy + (e.offsetY - state.dragStart.y);
+  state.view.x = state.dragStart.vx + (p.x - state.dragStart.x);
+  state.view.y = state.dragStart.vy + (p.y - state.dragStart.y);
   drawMap();
 });
 
 canvas.addEventListener("mouseup", (e) => {
+  const p = canvasPos(e);
   if (state.dragLoc) {
     const loc = state.dragLoc;
     state.dragLoc = null;
@@ -354,28 +503,31 @@ canvas.addEventListener("mouseup", (e) => {
         .then(refreshMap)
         .catch((err) => alert(err.message));
     } else {
-      handleMapClick(e.offsetX, e.offsetY);  // treat as a click
+      handleMapClick(p.x, p.y);  // treat as a click
     }
     return;
   }
   if (!state.dragging) return;
   state.dragging = false;
-  const moved = Math.hypot(e.offsetX - state.dragStart.x, e.offsetY - state.dragStart.y);
-  if (moved <= 4) handleMapClick(e.offsetX, e.offsetY);
+  const moved = Math.hypot(p.x - state.dragStart.x, p.y - state.dragStart.y);
+  if (moved <= 4) handleMapClick(p.x, p.y);
 });
 
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
+  const p = canvasPos(e);
   const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
   const v = state.view;
-  const newZoom = Math.min(4, Math.max(0.5, v.zoom * factor));
+  const newZoom = Math.min(4, Math.max(0.1, v.zoom * factor));
   // keep the point under the cursor fixed while zooming
-  const wx = (e.offsetX - v.x) / v.zoom, wy = (e.offsetY - v.y) / v.zoom;
+  const wx = (p.x - v.x) / v.zoom, wy = (p.y - v.y) / v.zoom;
   v.zoom = newZoom;
-  v.x = e.offsetX - wx * newZoom;
-  v.y = e.offsetY - wy * newZoom;
+  v.x = p.x - wx * newZoom;
+  v.y = p.y - wy * newZoom;
   drawMap();
 }, { passive: false });
+
+window.addEventListener("resize", () => { fitCanvas(); drawMap(); });
 
 function hitTest(sx, sy) {
   if (!state.map) return null;
@@ -422,7 +574,7 @@ async function placeLocationAt(sx, sy) {
     return;
   }
   const w = screenToWorld(sx, sy);
-  const x = Math.max(0, Math.round(w.x)), y = Math.max(0, Math.round(w.y));
+  const { x, y } = clampToBounds(Math.round(w.x), Math.round(w.y));
   try {
     await api("/api/locations", {
       method: "POST",
@@ -497,7 +649,8 @@ $("modeConnect").addEventListener("click", () => setMode("connect"));
 
 /* ---------------- boot ---------------- */
 
-refreshMap().then(whoami).catch((e) => {
+fitCanvas();
+refreshMap().then(() => { fitView(); return whoami(); }).catch((e) => {
   $("whoami").textContent = "server unreachable";
   console.error(e);
 });

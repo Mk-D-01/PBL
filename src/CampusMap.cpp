@@ -18,13 +18,7 @@ bool containsIgnoreCase(const std::string& haystack, const std::string& needle) 
     return toLower(haystack).find(toLower(needle)) != std::string::npos;
 }
 
-// Clamps coordinates so names and markers stay inside the grid.
-void clampCoords(int& x, int& y) {
-    if (x < 2) x = 2;
-    if (x > CampusMap::GRID_WIDTH - 3) x = CampusMap::GRID_WIDTH - 3;
-    if (y < 1) y = 1;
-    if (y > CampusMap::GRID_HEIGHT - 2) y = CampusMap::GRID_HEIGHT - 2;
-}
+int clampInt(int value, int lo, int hi) { return value < lo ? lo : (value > hi ? hi : value); }
 
 // Removes the edge towards `toId` from one adjacency bucket (at most one
 // exists, since duplicate connections are rejected in connect()).
@@ -34,10 +28,29 @@ bool removeEdgeFrom(ds::LinkedList<Connection>& bucket, int toId) {
 
 }  // namespace
 
-CampusMap::CampusMap() : grid_(GRID_HEIGHT, ds::DynamicArray<char>(GRID_WIDTH, ' ')) {}
+CampusMap::CampusMap(int width, int height)
+    : width_(clampInt(width, MIN_WIDTH, MAX_WIDTH)),
+      height_(clampInt(height, MIN_HEIGHT, MAX_HEIGHT)),
+      grid_(height_, ds::DynamicArray<char>(width_, ' ')) {}
 
 CampusMap::~CampusMap() {
     for (Location* loc : locations_) delete loc;
+}
+
+// Clamps coordinates so names and markers stay inside the grid.
+void CampusMap::clampCoords(int& x, int& y) const {
+    x = clampInt(x, minX(), maxX());
+    y = clampInt(y, minY(), maxY());
+}
+
+bool CampusMap::reset(int width, int height) {
+    if (width < MIN_WIDTH || width > MAX_WIDTH || height < MIN_HEIGHT || height > MAX_HEIGHT) {
+        return false;
+    }
+    clear();
+    width_ = width;
+    height_ = height;
+    return true;
 }
 
 void CampusMap::clear() {
@@ -250,8 +263,7 @@ void CampusMap::drawNode(const Location* loc) {
 }
 
 void CampusMap::rebuildGrid() {
-    grid_ = ds::DynamicArray<ds::DynamicArray<char>>(GRID_HEIGHT,
-                                                     ds::DynamicArray<char>(GRID_WIDTH, ' '));
+    grid_ = ds::DynamicArray<ds::DynamicArray<char>>(height_, ds::DynamicArray<char>(width_, ' '));
     drawEdges();
     for (const Location* loc : locations_)
         if (loc != nullptr) drawNode(loc);
@@ -261,11 +273,11 @@ void CampusMap::rebuildGrid() {
 std::string CampusMap::renderMap() const {
     if (gridDirty_) const_cast<CampusMap*>(this)->rebuildGrid();
     std::ostringstream out;
-    const std::string border(GRID_WIDTH, '-');
+    const std::string border(width_, '-');
     out << '+' << border << "+\n";
-    for (int row = 0; row < GRID_HEIGHT; ++row) {
+    for (int row = 0; row < height_; ++row) {
         out << '|';
-        for (int col = 0; col < GRID_WIDTH; ++col) out << grid_[row][col];
+        for (int col = 0; col < width_; ++col) out << grid_[row][col];
         out << "|\n";
     }
     out << '+' << border << "+\n";

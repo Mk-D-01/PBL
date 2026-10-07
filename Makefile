@@ -19,7 +19,7 @@ WEBT := mapgen_web_tests
 
 LIB_SRCS    := src/CampusMap.cpp src/MapGenerator.cpp src/Navigation.cpp src/Menu.cpp
 LIB_OBJS    := $(LIB_SRCS:src/%.cpp=build/%.o)
-WEB_SRCS    := src/web/HttpServer.cpp src/web/Json.cpp src/web/ApiController.cpp
+WEB_SRCS    := src/web/HttpServer.cpp src/web/Json.cpp src/web/ApiController.cpp src/web/MapStore.cpp
 WEB_OBJS    := $(WEB_SRCS:src/%.cpp=build/%.o)
 TEST_SRCS   := tests/self_test.cpp
 WEBT_SRCS   := tests/web_test.cpp

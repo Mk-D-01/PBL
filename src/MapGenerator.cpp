@@ -14,7 +14,7 @@ int addOrDie(CampusMap& map, const std::string& name, LocationType type, int x, 
 }  // namespace
 
 void MapGenerator::generate(CampusMap& map) {
-    map.clear();  // re-seeding always starts from a blank map
+    map.reset(CampusMap::GRID_WIDTH, CampusMap::GRID_HEIGHT);  // blank map at the seed layout's size
 
     // ------------------------------------------------- location placement
     // ids are assigned in creation order: 0..N-1

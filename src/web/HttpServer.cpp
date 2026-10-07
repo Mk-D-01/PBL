@@ -21,6 +21,11 @@ using SockLen = int;
 inline int closeSocket(web::SocketHandle s) { return ::closesocket(s); }
 inline int sendAll(web::SocketHandle s, const char* data, int len) { return ::send(s, data, len, 0); }
 inline int recvSome(web::SocketHandle s, char* buf, int len) { return static_cast<int>(::recv(s, buf, len, 0)); }
+// Winsock takes the timeout as a DWORD of milliseconds.
+inline void setRecvTimeout(web::SocketHandle s, int ms) {
+    DWORD timeout = static_cast<DWORD>(ms);
+    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+}
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -30,6 +35,13 @@ using SockLen = socklen_t;
 inline int closeSocket(web::SocketHandle s) { return ::close(s); }
 inline int sendAll(web::SocketHandle s, const char* data, int len) { return static_cast<int>(::write(s, data, static_cast<size_t>(len))); }
 inline int recvSome(web::SocketHandle s, char* buf, int len) { return static_cast<int>(::read(s, buf, static_cast<size_t>(len))); }
+// POSIX takes the timeout as a struct timeval.
+inline void setRecvTimeout(web::SocketHandle s, int ms) {
+    timeval tv;
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}
 #endif
 
 #include <algorithm>
@@ -90,6 +102,8 @@ std::string HttpRequest::cookie(const std::string& name) const {
         std::size_t end = header->find(';', pos);
         if (end == std::string::npos) end = header->size();
         std::string pair = header->substr(pos, end - pos);
+        // Browsers join cookies as "a=1; b=2", so every pair after the first has a leading space.
+        while (!pair.empty() && pair.front() == ' ') pair.erase(pair.begin());
         std::size_t eq = pair.find('=');
         if (eq != std::string::npos && pair.substr(0, eq) == name) {
             std::string value = pair.substr(eq + 1);
@@ -177,6 +191,9 @@ bool HttpServer::run() {
     while (true) {
         SocketHandle client = ::accept(listener, nullptr, nullptr);
         if (client == kInvalidSocket) continue;
+        // The server is single-threaded: browsers open idle "preconnect" sockets, and
+        // without a timeout one of those would block every other request forever.
+        setRecvTimeout(client, 2000);
         handleClient(client);
         closeSocket(client);
     }

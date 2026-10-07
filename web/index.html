@@ -10,6 +10,11 @@
 <header>
   <h1>🗺️ MapGen Engine — Campus Locator &amp; Navigation</h1>
   <div id="authBox">
+    <label id="mapPicker" title="Only admins can switch the active map">
+      Map
+      <select id="mapSelect"></select>
+      <span id="mapDirty" class="hidden" title="Unsaved changes">●</span>
+    </label>
     <span id="whoami">guest</span>
     <form id="loginForm">
       <input id="loginUser" placeholder="username" autocomplete="username">
@@ -42,6 +47,19 @@
 
     <section class="panel admin hidden" id="adminPanel">
       <h2>Admin</h2>
+
+      <h3>Maps</h3>
+      <label>Name <input id="newMapName" placeholder="e.g. NorthCampus" maxlength="40"></label>
+      <div class="row">
+        <label>Width <input id="newMapW" type="number" value="62" min="20" max="200"></label>
+        <label>Height <input id="newMapH" type="number" value="20" min="10" max="100"></label>
+      </div>
+      <div class="row">
+        <button id="createMapBtn">New empty map</button>
+        <button id="saveMapBtn">Save</button>
+        <button id="saveAsBtn">Save as</button>
+      </div>
+      <div id="mapMsg" class="muted small">Pick a map in the header dropdown. Save keeps your edits.</div>
 
       <h3>Map Designer</h3>
       <div class="row" id="modeBar">
@@ -103,7 +121,8 @@
 
   <section id="mapPane">
     <canvas id="mapCanvas" width="960" height="620"></canvas>
-    <div id="mapHint">Click a circle to select a location · drag empty space to pan · scroll to zoom</div>
+    <div id="mapHint">Click a circle to select a location · drag empty space to pan · scroll to zoom
+      <button id="fitBtn" class="small">Fit map</button></div>
     <div id="modeBadge" class="hidden"></div>
   </section>
 </main>
