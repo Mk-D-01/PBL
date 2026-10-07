@@ -349,6 +349,29 @@ int main() {
     resp = bodyOf(http("GET", "/api/map"));
     CHECK(has(resp, "MainGate") && has(resp, "\"width\":62"), "selecting default rebuilds the built-in campus");
 
+    // ---- viewers: any visitor can look at another saved map without switching the shared one ----
+    resp = bodyOf(http("GET", "/api/map?map=scratch"));  // no cookie at all: a guest
+    CHECK(has(resp, "\"name\":\"scratch\"") && has(resp, "\"width\":40") && has(resp, "\"name\":\"A\""),
+          "guest can view another saved map with ?map=");
+    resp = bodyOf(http("GET", "/api/maps"));
+    CHECK(has(resp, "\"active\":\"default\""), "viewing another map leaves the shared active map alone");
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"name\":\"default\"") && has(resp, "MainGate"), "no ?map= still shows the active map");
+    resp = bodyOf(http("GET", "/api/route?from=A&to=C&map=scratch", "", userCookie));
+    CHECK(has(resp, "\"reachable\":true"), "routing works inside a viewed map");
+    resp = bodyOf(http("GET", "/api/route?from=A&to=C"));
+    CHECK(has(resp, "error"), "same names do not exist in the active map");
+    resp = bodyOf(http("GET", "/api/search?q=A&map=scratch"));
+    CHECK(has(resp, "\"name\":\"A\""), "search works inside a viewed map");
+    resp = bodyOf(http("GET", "/api/info?map=scratch"));
+    CHECK(has(resp, "Locations   : 2"), "info works inside a viewed map");
+    http("GET", "/api/map?map=..%2Fevil", "", "", &statusLine);
+    CHECK(has(statusLine, "400"), "viewing a map with path characters is rejected");
+    http("GET", "/api/map?map=nosuchmap", "", "", &statusLine);
+    CHECK(has(statusLine, "404"), "viewing an unknown map is 404");
+    http("POST", "/api/locations", R"({"name":"Z","type":"F","detail":"z","x":5,"y":5})", userCookie, &statusLine);
+    CHECK(has(statusLine, "403"), "viewing is read-only: users still cannot edit");
+
     // Leave the default campus active for the remaining checks.
 
     // ---- logout ----

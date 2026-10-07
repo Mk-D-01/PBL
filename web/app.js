@@ -15,6 +15,10 @@ const state = {
   dragLoc: null,      // location being dragged on the canvas
   dragMoved: false,
   mouse: { x: 0, y: 0 },
+  // --- map picker ---
+  viewMap: null,      // non-admins: saved map they chose to look at (null = follow the active map)
+  mapName: "",        // name of the map currently shown
+  dirty: false,       // admins: active map has unsaved edits
 };
 
 /* ---------------- helpers ---------------- */
@@ -155,8 +159,15 @@ function drawMap() {
 
 /* ---------------- map data ---------------- */
 
+// Non-admins can look at any saved map without changing the shared one admins edit:
+// their pick is kept here and sent as ?map=NAME on every read-only request.
+function withMap(url) {
+  if (!state.viewMap || state.role === "admin") return url;
+  return url + (url.includes("?") ? "&" : "?") + "map=" + encodeURIComponent(state.viewMap);
+}
+
 async function refreshMap() {
-  state.map = await api("/api/map");
+  state.map = await api(withMap("/api/map"));
   await refreshMapList();
   drawMap();
   $("infoOut").textContent = "";
@@ -173,10 +184,11 @@ async function refreshMapList() {
     opt.textContent = m.saved ? m.name : `${m.name} (unsaved)`;
     sel.appendChild(opt);
   }
-  sel.value = r.active;
-  state.mapName = r.active;
-  state.dirty = r.dirty;
-  $("mapDirty").classList.toggle("hidden", !r.dirty);
+  const viewing = state.role !== "admin" && state.viewMap ? state.viewMap : r.active;
+  sel.value = viewing;
+  state.mapName = viewing;
+  state.dirty = r.dirty && state.role === "admin";  // only admins edit, so only they see "unsaved"
+  $("mapDirty").classList.toggle("hidden", !state.dirty);
 }
 
 // Zoom/pan so the whole map is visible (maps can be anywhere from 20x10 to 200x100).
@@ -226,7 +238,7 @@ async function runSearch() {
   const list = $("searchResults");
   if (!q) { list.innerHTML = ""; return; }
   try {
-    const { results } = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    const { results } = await api(withMap(`/api/search?q=${encodeURIComponent(q)}`));
     list.innerHTML = "";
     for (const r of results) {
       const li = document.createElement("li");
@@ -251,7 +263,7 @@ $("routeBtn").addEventListener("click", async () => {
   const out = $("routeResult");
   if (!from || !to) { out.innerHTML = `<span class="err">enter source and destination</span>`; return; }
   try {
-    const r = await api(`/api/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&metric=${metric}`);
+    const r = await api(withMap(`/api/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&metric=${metric}`));
     if (!r.reachable) {
       out.innerHTML = `<span class="err">no route found${r.exists ? "" : " (DFS confirms disconnected)"}</span>`;
       return;
@@ -274,8 +286,12 @@ async function whoami() {
     $("adminPanel").classList.toggle("hidden", r.role !== "admin");
     $("loginForm").classList.toggle("hidden", r.role !== "guest");
     $("logoutBtn").classList.toggle("hidden", r.role === "guest");
-    $("mapSelect").disabled = r.role !== "admin";  // the active map is global, so only admins switch it
     if (r.role !== "admin" && state.mode !== "view") setMode("view");
+    if (r.role === "admin" && state.viewMap) {
+      // admins always work on the shared active map, so drop any viewer-only pick
+      state.viewMap = null;
+      await showActiveMap();
+    }
     selectLocation(state.selected);
   } catch { /* server offline */ }
 }
@@ -322,6 +338,20 @@ function confirmDiscardUnsaved() {
 
 $("mapSelect").addEventListener("change", async (e) => {
   const target = e.target.value;
+  if (state.role !== "admin") {
+    // Viewers only change what *they* see; the shared map admins edit is untouched.
+    const previous = state.viewMap;
+    state.viewMap = target;
+    $("routeResult").innerHTML = "";
+    $("searchResults").innerHTML = "";
+    try {
+      await showActiveMap();
+    } catch (err) {
+      state.viewMap = previous;  // e.g. the map was removed meanwhile
+      await refreshMap().catch(() => {});
+    }
+    return;
+  }
   if (!confirmDiscardUnsaved()) { e.target.value = state.mapName; return; }
   try {
     await api("/api/maps/select", { method: "POST", body: JSON.stringify({ name: target }) });
@@ -452,7 +482,7 @@ $("generateBtn").addEventListener("click", async () => {
 
 $("infoBtn").addEventListener("click", async () => {
   try {
-    const r = await api("/api/info");
+    const r = await api(withMap("/api/info"));
     $("infoOut").textContent = r.info;
   } catch (e) {
     $("infoOut").textContent = e.message;

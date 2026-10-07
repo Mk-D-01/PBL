@@ -104,6 +104,32 @@ bool ApiController::activateSavedMap(const std::string& name, std::string& error
     return true;
 }
 
+const campus::CampusMap* ApiController::mapForView(const HttpRequest& request,
+                                                   std::unique_ptr<campus::CampusMap>& holder,
+                                                   HttpResponse& error) const {
+    const std::string name = request.queryParam("map");
+    if (name.empty() || name == activeName_) return map_.get();  // live map, incl. unsaved edits
+
+    if (!MapStore::validName(name)) {
+        error = HttpResponse::error(400, "invalid map name");
+        return nullptr;
+    }
+    holder = std::make_unique<campus::CampusMap>();
+    if (store_.exists(name)) {
+        std::string loadError;
+        if (!store_.load(name, *holder, loadError)) {
+            error = HttpResponse::error(400, loadError);
+            return nullptr;
+        }
+    } else if (name == kBuiltinName) {
+        campus::MapGenerator::generate(*holder);
+    } else {
+        error = HttpResponse::error(404, "map not found");
+        return nullptr;
+    }
+    return holder.get();
+}
+
 HttpResponse ApiController::handle(const HttpRequest& request) {
     const std::string& path = request.path;
     const std::string& method = request.method;
@@ -114,10 +140,10 @@ HttpResponse ApiController::handle(const HttpRequest& request) {
     if (path == "/api/whoami" && method == "GET") return handleWhoami(request);
 
     // ---- user endpoints (any authenticated session) ----
-    if (path == "/api/map" && method == "GET") return apiMap();
+    if (path == "/api/map" && method == "GET") return apiMap(request);
     if (path == "/api/search" && method == "GET") return apiSearch(request);
     if (path == "/api/route" && method == "GET") return apiRoute(request);
-    if (path == "/api/info" && method == "GET") return apiInfo();
+    if (path == "/api/info" && method == "GET") return apiInfo(request);
     if (path == "/api/traverse" && method == "GET") return apiTraverse(request);
     if (path == "/api/maps" && method == "GET") return apiMaps();
 
@@ -236,38 +262,48 @@ HttpResponse ApiController::handleWhoami(const HttpRequest& request) {
     return HttpResponse::json(200, obj.dump());
 }
 
-HttpResponse ApiController::apiMap() {
+HttpResponse ApiController::apiMap(const HttpRequest& request) {
+    std::unique_ptr<campus::CampusMap> holder;
+    HttpResponse error;
+    const campus::CampusMap* view = mapForView(request, holder, error);
+    if (view == nullptr) return error;
+    const bool isActive = (view == map_.get());
+
     Json obj = Json::makeObject();
     Json locs = Json::makeArray();
-    for (const Location* loc : map_->allLocations()) {
+    for (const Location* loc : view->allLocations()) {
         locs.items.pushBack(locationJson(loc));
     }
     obj.members.put("locations", locs);
-    obj.members.put("connections", connectionsJson(*map_));
-    obj.members.put("name", Json::makeString(activeName_));
-    obj.members.put("width", Json::makeNumber(map_->width()));
-    obj.members.put("height", Json::makeNumber(map_->height()));
+    obj.members.put("connections", connectionsJson(*view));
+    obj.members.put("name", Json::makeString(isActive ? activeName_ : request.queryParam("map")));
+    obj.members.put("width", Json::makeNumber(view->width()));
+    obj.members.put("height", Json::makeNumber(view->height()));
     // The area locations may occupy; coordinates outside it are clamped by the engine.
     Json bounds = Json::makeObject();
-    bounds.members.put("minX", Json::makeNumber(map_->minX()));
-    bounds.members.put("maxX", Json::makeNumber(map_->maxX()));
-    bounds.members.put("minY", Json::makeNumber(map_->minY()));
-    bounds.members.put("maxY", Json::makeNumber(map_->maxY()));
+    bounds.members.put("minX", Json::makeNumber(view->minX()));
+    bounds.members.put("maxX", Json::makeNumber(view->maxX()));
+    bounds.members.put("minY", Json::makeNumber(view->minY()));
+    bounds.members.put("maxY", Json::makeNumber(view->maxY()));
     obj.members.put("bounds", bounds);
-    obj.members.put("dirty", Json::makeBool(dirty_));
+    obj.members.put("dirty", Json::makeBool(isActive && dirty_));
     return HttpResponse::json(200, obj.dump());
 }
 
 HttpResponse ApiController::apiSearch(const HttpRequest& request) {
     std::string query = request.queryParam("q");
     if (query.empty()) return HttpResponse::error(400, "missing query parameter 'q'");
+    std::unique_ptr<campus::CampusMap> holder;
+    HttpResponse error;
+    const campus::CampusMap* view = mapForView(request, holder, error);
+    if (view == nullptr) return error;
 
     Json arr = Json::makeArray();
     // Exact name match first (short-circuit result).
-    const Location* exact = map_->searchByName(query);
+    const Location* exact = view->searchByName(query);
     if (exact != nullptr) arr.items.pushBack(locationJson(exact));
     // Then keyword matches (skip the exact duplicate).
-    for (const Location* loc : map_->searchByKeyword(query)) {
+    for (const Location* loc : view->searchByKeyword(query)) {
         if (exact != nullptr && loc->id() == exact->id()) continue;
         arr.items.pushBack(locationJson(loc));
     }
@@ -283,25 +319,29 @@ HttpResponse ApiController::apiRoute(const HttpRequest& request) {
     std::string to = request.queryParam("to");
     std::string metric = request.queryParam("metric");
     if (metric.empty()) metric = "distance";
+    std::unique_ptr<campus::CampusMap> holder;
+    HttpResponse error;
+    const campus::CampusMap* view = mapForView(request, holder, error);
+    if (view == nullptr) return error;
 
-    const Location* src = map_->searchByName(from);
-    const Location* dst = map_->searchByName(to);
+    const Location* src = view->searchByName(from);
+    const Location* dst = view->searchByName(to);
     // Fall back to numeric ids when names are not found.
     if (src == nullptr) {
         try {
-            src = map_->findLocation(std::stoi(from));
+            src = view->findLocation(std::stoi(from));
         } catch (...) {}
     }
     if (dst == nullptr) {
         try {
-            dst = map_->findLocation(std::stoi(to));
+            dst = view->findLocation(std::stoi(to));
         } catch (...) {}
     }
     if (src == nullptr || dst == nullptr) {
         return HttpResponse::error(404, "source or destination not found");
     }
 
-    campus::Navigation nav(*map_);
+    campus::Navigation nav(*view);
     Route route = (metric == "hops") ? nav.shortestRouteByHops(src->id(), dst->id())
                                      : nav.shortestRouteByDistance(src->id(), dst->id());
     bool exists = nav.pathExists(src->id(), dst->id());
@@ -312,14 +352,19 @@ HttpResponse ApiController::apiRoute(const HttpRequest& request) {
     obj.members.put("metric", Json::makeString(metric == "hops" ? "hops" : "distance"));
     obj.members.put("totalDistance", Json::makeNumber(route.totalDistance));
     obj.members.put("hops", Json::makeNumber(route.hops));
-    obj.members.put("path", pathJson(*map_, route));
+    obj.members.put("path", pathJson(*view, route));
     return HttpResponse::json(200, obj.dump());
 }
 
-HttpResponse ApiController::apiInfo() {
+HttpResponse ApiController::apiInfo(const HttpRequest& request) {
+    std::unique_ptr<campus::CampusMap> holder;
+    HttpResponse error;
+    const campus::CampusMap* view = mapForView(request, holder, error);
+    if (view == nullptr) return error;
+
     Json obj = Json::makeObject();
-    obj.members.put("info", Json::makeString(map_->campusInfo()));
-    obj.members.put("adjacency", Json::makeString(map_->adjacencyReport()));
+    obj.members.put("info", Json::makeString(view->campusInfo()));
+    obj.members.put("adjacency", Json::makeString(view->adjacencyReport()));
     return HttpResponse::json(200, obj.dump());
 }
 
@@ -327,21 +372,25 @@ HttpResponse ApiController::apiTraverse(const HttpRequest& request) {
     std::string from = request.queryParam("from");
     std::string order = request.queryParam("order");
     if (order.empty()) order = "bfs";
+    std::unique_ptr<campus::CampusMap> holder;
+    HttpResponse error;
+    const campus::CampusMap* view = mapForView(request, holder, error);
+    if (view == nullptr) return error;
 
-    const Location* src = map_->searchByName(from);
+    const Location* src = view->searchByName(from);
     if (src == nullptr) {
         try {
-            src = map_->findLocation(std::stoi(from));
+            src = view->findLocation(std::stoi(from));
         } catch (...) {}
     }
     if (src == nullptr) return HttpResponse::error(404, "source not found");
 
-    campus::Navigation nav(*map_);
+    campus::Navigation nav(*view);
     ds::DynamicArray<int> visit = (order == "dfs") ? nav.traverseDFS(src->id()) : nav.traverseBFS(src->id());
 
     Json arr = Json::makeArray();
     for (int id : visit) {
-        const Location* loc = map_->findLocation(id);
+        const Location* loc = view->findLocation(id);
         if (loc != nullptr) arr.items.pushBack(Json::makeString(loc->name()));
     }
     Json obj = Json::makeObject();

@@ -42,10 +42,12 @@ private:
     const WebSession* sessionFor(const HttpRequest& request) const;
 
     // ---- user endpoints (read-only) ----
-    HttpResponse apiMap();
+    // These accept an optional ?map=NAME so any viewer can look at a saved map without
+    // changing the global active map that admins edit.
+    HttpResponse apiMap(const HttpRequest& request);
     HttpResponse apiSearch(const HttpRequest& request);
     HttpResponse apiRoute(const HttpRequest& request);
-    HttpResponse apiInfo();
+    HttpResponse apiInfo(const HttpRequest& request);
     HttpResponse apiTraverse(const HttpRequest& request);
 
     // ---- admin endpoints (mutating) ----
@@ -66,6 +68,12 @@ private:
     // Loads a saved map into a fresh CampusMap and, only if that fully succeeds, makes
     // it the active one (activeName_ = name, dirty_ = false). On failure nothing changes.
     bool activateSavedMap(const std::string& name, std::string& error);
+    // The map a read-only request refers to: the active map when ?map= is absent or names
+    // it, otherwise a saved (or built-in) map loaded into `holder` for this request only.
+    // Returns nullptr and fills `error` (400/404) for a bad or unknown name.
+    const campus::CampusMap* mapForView(const HttpRequest& request,
+                                        std::unique_ptr<campus::CampusMap>& holder,
+                                        HttpResponse& error) const;
     // 401/403 JSON error when the caller is not an admin; nullptr otherwise
     // (and the session is returned through `out`).
     const WebSession* requireAdmin(const HttpRequest& request, HttpResponse& errorOut) const;
