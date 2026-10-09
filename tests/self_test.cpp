@@ -64,8 +64,8 @@ void testDataStructures() {
 
     ds::DynamicArray<int> copied(arr);
     require(copied.size() == arr.size(), "DynamicArray copy constructor");
-    ds::DynamicArray<int> moved(std::move(copied));
-    require(moved.size() == arr.size() && copied.size() == 0, "DynamicArray move constructor");
+    copied.popBack();
+    require(copied.size() + 1 == arr.size(), "DynamicArray copy is independent");
 
     // LinkedList
     ds::LinkedList<int> list;

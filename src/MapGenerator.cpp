@@ -1,5 +1,7 @@
 #include "MapGenerator.hpp"
 
+#include <stdexcept>
+
 namespace campus {
 namespace {
 

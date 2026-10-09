@@ -1,12 +1,12 @@
 #pragma once
 
 #include <cstddef>
-#include <stdexcept>
-#include <utility>
+using namespace std;
 
 namespace ds {
 
-// Queue: FIFO container on singly-linked nodes, implemented from scratch.
+// Queue: FIFO (first in, first out) built on linked nodes.
+// Note: call empty() before peek()/dequeue() - an empty queue has no front.
 template <typename T>
 class Queue {
     struct Node {
@@ -14,98 +14,74 @@ class Queue {
         Node* behind;
     };
 
-public:
-    Queue() : front_(nullptr), back_(nullptr), size_(0) {}
+    Node* front_;
+    Node* back_;
+    size_t size_;
 
-    Queue(const Queue& other) : Queue() { copyFrom(other); }
+    void copyFrom(const Queue& other) {
+        for (Node* node = other.front_; node != nullptr; node = node->behind)
+            enqueue(node->value);
+    }
+
+public:
+    Queue() {
+        front_ = nullptr;
+        back_ = nullptr;
+        size_ = 0;
+    }
+
+    Queue(const Queue& other) {
+        front_ = nullptr;
+        back_ = nullptr;
+        size_ = 0;
+        copyFrom(other);
+    }
 
     Queue& operator=(const Queue& other) {
         if (this != &other) {
-            Queue tmp(other);
-            swap(tmp);
-        }
-        return *this;
-    }
-
-    Queue(Queue&& other) noexcept
-        : front_(other.front_), back_(other.back_), size_(other.size_) {
-        other.front_ = nullptr;
-        other.back_ = nullptr;
-        other.size_ = 0;
-    }
-
-    Queue& operator=(Queue&& other) noexcept {
-        if (this != &other) {
             clear();
-            front_ = other.front_;
-            back_ = other.back_;
-            size_ = other.size_;
-            other.front_ = nullptr;
-            other.back_ = nullptr;
-            other.size_ = 0;
+            copyFrom(other);
         }
         return *this;
     }
 
-    ~Queue() { clear(); }
+    ~Queue() {
+        clear();
+    }
 
+    // adds at the back
     void enqueue(const T& value) {
         Node* node = new Node{value, nullptr};
-        if (back_ != nullptr)
-            back_->behind = node;
+        if (back_ == nullptr)
+            front_ = node;          // queue was empty
         else
-            front_ = node;
+            back_->behind = node;
         back_ = node;
-        ++size_;
+        size_++;
     }
 
-    void enqueue(T&& value) {
-        Node* node = new Node{std::move(value), nullptr};
-        if (back_ != nullptr)
-            back_->behind = node;
-        else
-            front_ = node;
-        back_ = node;
-        ++size_;
-    }
-
+    // removes from the front
     void dequeue() {
-        if (front_ == nullptr) throw std::out_of_range("Queue::dequeue on empty queue");
+        if (front_ == nullptr)
+            return;
         Node* node = front_;
-        front_ = node->behind;
-        if (front_ == nullptr) back_ = nullptr;
+        front_ = front_->behind;
+        if (front_ == nullptr)
+            back_ = nullptr;        // queue became empty
         delete node;
-        --size_;
+        size_--;
     }
 
-    T& peek() {
-        if (front_ == nullptr) throw std::out_of_range("Queue::peek on empty queue");
-        return front_->value;
-    }
-    const T& peek() const {
-        if (front_ == nullptr) throw std::out_of_range("Queue::peek on empty queue");
-        return front_->value;
-    }
+    T& peek() { return front_->value; }
+    const T& peek() const { return front_->value; }
 
-    std::size_t size() const { return size_; }
+    size_t size() const { return size_; }
     bool empty() const { return size_ == 0; }
+
     void clear() {
-        while (!empty()) dequeue();
+        while (!empty())
+            dequeue();
     }
-    void swap(Queue& other) noexcept {
-        std::swap(front_, other.front_);
-        std::swap(back_, other.back_);
-        std::swap(size_, other.size_);
-    }
-
-private:
-    void copyFrom(const Queue& other) {
-        for (Node* node = other.front_; node != nullptr; node = node->behind) enqueue(node->value);
-    }
-
-    Node* front_;
-    Node* back_;
-    std::size_t size_;
 };
 
 }  // namespace ds
