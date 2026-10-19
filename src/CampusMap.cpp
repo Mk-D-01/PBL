@@ -53,6 +53,22 @@ bool CampusMap::reset(int width, int height) {
     return true;
 }
 
+bool CampusMap::resize(int width, int height) {
+    if (width < MIN_WIDTH || width > MAX_WIDTH || height < MIN_HEIGHT || height > MAX_HEIGHT) {
+        return false;
+    }
+    // Same bounds as maxX()/maxY() for the new size. Growing always fits; shrinking
+    // is refused rather than silently moving locations the user placed.
+    for (const Location* loc : locations_) {
+        if (loc == nullptr) continue;
+        if (loc->x() > width - 3 || loc->y() > height - 2) return false;
+    }
+    width_ = width;
+    height_ = height;
+    gridDirty_ = true;
+    return true;
+}
+
 void CampusMap::clear() {
     for (Location* loc : locations_) delete loc;
     locations_.clear();

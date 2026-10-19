@@ -316,6 +316,17 @@ void testMapSize() {
             "coordinates clamp to the map's own bounds");
     require(map.maxX() == 97 && map.maxY() == 38, "bounds follow the map size");
 
+    // resize keeps everything; it only refuses sizes that would cut a location off.
+    map.connect(id, map.addLocation("Near", campus::LocationType::Gate, 5, 5, ""), 10, "path");
+    require(!map.resize(60, 40) && map.width() == 100, "resize refuses to cut off a location");
+    require(!map.resize(300, 40) && map.width() == 100, "resize rejects an out-of-range size");
+    require(map.resize(150, 60) && map.width() == 150 && map.height() == 60, "resize expands the map");
+    require(map.locationCount() == 2 && map.edgeCount() == 1 && far->x() == 97 && far->y() == 38,
+            "resize keeps locations, positions and connections");
+    require(map.addLocation("Edge", campus::LocationType::Facility, 140, 55, "x") >= 0 &&
+                map.searchByName("Edge")->x() == 140,
+            "the expanded area accepts new locations");
+
     require(map.reset(30, 12) && map.locationCount() == 0, "reset clears the map");
     require(map.renderMap().find("+------------------------------+") != std::string::npos,
             "renderMap uses the new width");

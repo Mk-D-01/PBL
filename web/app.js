@@ -366,6 +366,27 @@ $("saveAsBtn").addEventListener("click", () => {
   saveMap(name).then(() => { $("newMapName").value = ""; });
 });
 
+// Grows (or shrinks) the active map in place; locations and connections are kept.
+async function resizeMap(width, height) {
+  try {
+    await api("/api/maps/resize", { method: "POST", body: JSON.stringify({ width, height }) });
+    await refreshMap();
+    fitView();
+    $("newMapW").value = state.map.width;
+    $("newMapH").value = state.map.height;
+    mapMessage(`Resized "${state.mapName}" to ${width}x${height}. Save to keep it.`);
+  } catch (err) {
+    mapMessage(err.message, true);
+  }
+}
+
+$("resizeMapBtn").addEventListener("click", () =>
+  resizeMap(parseInt($("newMapW").value, 10), parseInt($("newMapH").value, 10)));
+$("expandMapBtn").addEventListener("click", () => {
+  if (!state.map) return;
+  resizeMap(Math.min(200, state.map.width + 20), Math.min(100, state.map.height + 10));
+});
+
 $("fitBtn").addEventListener("click", fitView);
 
 /* ---------------- admin actions ---------------- */

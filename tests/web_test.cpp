@@ -301,6 +301,23 @@ int main() {
     resp = bodyOf(http("GET", "/api/maps"));
     CHECK(has(resp, "\"dirty\":true"), "edits mark the map dirty");
 
+    // ---- expanding a map in place ----
+    http("POST", "/api/maps/resize", R"({"width":80,"height":30})", userCookie, &statusLine);
+    CHECK(has(statusLine, "403"), "resize is admin-only");
+    http("POST", "/api/maps/resize", R"({"width":30})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "resize refuses to cut off a location (C sits at x 37)");
+    http("POST", "/api/maps/resize", R"({"width":80,"height":500})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "resize rejects an out-of-range size");
+    resp = bodyOf(http("POST", "/api/maps/resize", R"({"width":80,"height":30})", adminCookie));
+    CHECK(has(resp, "\"ok\":true"), "admin expands the map");
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"width\":80") && has(resp, "\"height\":30") && has(resp, "\"x\":37") &&
+              has(resp, "\"name\":\"A\""),
+          "expanded map keeps its locations where they were");
+    http("POST", "/api/locations", R"({"name":"D","type":"F","detail":"d","x":70,"y":25})", adminCookie);
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"x\":70") && has(resp, "\"y\":25"), "new room is usable after expanding");
+
     http("POST", "/api/connections", R"({"from":0,"to":2,"d":50,"label":"walk"})", adminCookie);
     http("DELETE", "/api/locations/1", "", adminCookie);  // leaves a hole at id 1
     resp = bodyOf(http("POST", "/api/maps/save", "", adminCookie));
@@ -318,7 +335,8 @@ int main() {
           "switching shows the other map's data");
     resp = bodyOf(http("POST", "/api/maps/select", R"({"name":"scratch"})", adminCookie));
     resp = bodyOf(http("GET", "/api/map"));
-    CHECK(has(resp, "\"width\":40") && has(resp, "\"name\":\"A\"") && has(resp, "\"name\":\"C\"") &&
+    CHECK(has(resp, "\"width\":80") && has(resp, "\"height\":30") && has(resp, "\"name\":\"A\"") &&
+              has(resp, "\"name\":\"C\"") &&
               !has(resp, "\"name\":\"B\""),
           "saved map reloads with its size and locations");
     CHECK(has(resp, "\"id\":2"), "reload keeps ids stable across the deleted slot");

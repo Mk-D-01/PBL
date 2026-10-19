@@ -40,7 +40,7 @@ Menu (console) ------------------------------------->                           
 - Web: `HttpServer` (raw Winsock/BSD sockets, single-threaded, one request/connection, loopback only),
   `Json` (hand-rolled parser/writer), `ApiController` (route table in `handle()`, cookie sessions in `ds::HashMap`).
 - Endpoints: `/login /logout /api/whoami /api/map /api/search /api/route /api/info /api/traverse` (public),
-  admin (401/403 guarded): `/api/generate`, `/api/locations` POST/PUT, `/api/locations/{id}` DELETE, `/api/connections` POST/DELETE.
+  admin (401/403 guarded): `/api/generate`, `/api/maps` POST, `/api/maps/select|save|resize`, `/api/locations` POST/PUT, `/api/locations/{id}` DELETE, `/api/connections` POST/DELETE.
 
 ## Layout
 ```
@@ -63,8 +63,8 @@ Office autosave (presentation, not code); its `~$` lock file shows as deleted in
 - State: engine holds all state in one `CampusMap`; frontend keeps a global `state` object and redraws the canvas wholesale after each mutation (`refr`eshMap()`).
 - Comments are plentiful, explain "why", ASCII only in code.
 
-## Known issues (see findings; none fixed yet)
-1. **Real bug:** `Navigation::valid()` compares ids to `locationCount()` (live count, not slot count) — after any deletion, routes touching the highest ids silently fail.
-2. Server is blocked by any idle TCP connection (no recv timeout, single-threaded).
-3. `--root` flag is ignored by the API (`"web"` hardcoded in `ApiController.cpp:131`).
-4. Web coordinates are silently clamped to the ASCII grid (x≤59, y≤18) by `CampusMap`.
+## Known issues
+Fixed (2026-10-19): `Navigation::valid()` slot-vs-count bug, idle-connection blocking (SO_RCVTIMEO),
+`--root` ignored by the API. Coordinates are clamped to the *active map's* bounds (`minX..maxX`,
+`minY..maxY`); maps are 20x10..200x100 and can be grown in place via `CampusMap::resize()` /
+`POST /api/maps/resize` (refuses sizes that would cut off a location).

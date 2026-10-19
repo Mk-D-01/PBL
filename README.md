@@ -36,6 +36,7 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude src/main.cpp \
 make web        # builds ./mapgen_web (HTTP server + browser UI)
 make serve      # build + start, then open http://localhost:18080
 # or: ./mapgen_web --port 18080 --root web
+# Windows: .\mapgen_web.exe --port 18080 --root web
 ```
 
 Open **http://localhost:18080** in a browser. Accounts:
