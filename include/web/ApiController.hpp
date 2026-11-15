@@ -27,8 +27,9 @@ struct WebSession {
 // synchronization is needed.
 class ApiController {
 public:
-    // `mapsDir` is where saved maps live (one <name>.json each).
-    explicit ApiController(std::string mapsDir = "maps");
+    // `mapsDir` is where saved maps live (one <name>.json each); `docRoot` is the
+    // folder the static front end is served from (the --root flag).
+    explicit ApiController(std::string mapsDir = "maps", std::string docRoot = "web");
 
     // Main dispatch entry passed to HttpServer.
     HttpResponse handle(const HttpRequest& request);
@@ -61,6 +62,7 @@ private:
     HttpResponse apiCreateMap(const HttpRequest& request);
     HttpResponse apiSelectMap(const HttpRequest& request);
     HttpResponse apiSaveMap(const HttpRequest& request);
+    HttpResponse apiResizeMap(const HttpRequest& request);
 
     // ---- helpers ----
     // Loads a saved map into a fresh CampusMap and, only if that fully succeeds, makes
@@ -74,6 +76,7 @@ private:
     // replace it atomically: CampusMap itself is non-copyable.
     std::unique_ptr<campus::CampusMap> map_;
     MapStore store_;
+    std::string docRoot_;
     std::string activeName_ = "default";  // name the active map saves under
     bool dirty_ = false;                  // edited since the last load/save?
     campus::MapGenerator generator_;

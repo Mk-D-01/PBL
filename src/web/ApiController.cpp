@@ -81,7 +81,8 @@ constexpr Account kAccounts[] = {
 
 }  // namespace
 
-ApiController::ApiController(std::string mapsDir) : store_(std::move(mapsDir)) {
+ApiController::ApiController(std::string mapsDir, std::string docRoot)
+    : store_(std::move(mapsDir)), docRoot_(std::move(docRoot)) {
     map_ = std::make_unique<campus::CampusMap>();
     // A saved "default" map wins, so edits survive a restart; otherwise seed the
     // built-in campus so the map is never empty.
@@ -125,6 +126,7 @@ HttpResponse ApiController::handle(const HttpRequest& request) {
     if (path == "/api/maps" && method == "POST") return apiCreateMap(request);
     if (path == "/api/maps/select" && method == "POST") return apiSelectMap(request);
     if (path == "/api/maps/save" && method == "POST") return apiSaveMap(request);
+    if (path == "/api/maps/resize" && method == "POST") return apiResizeMap(request);
 
     // ---- admin endpoints (must be authenticated, and PUT/POST must not
     // fall through into each other) ----
@@ -155,7 +157,7 @@ HttpResponse ApiController::handle(const HttpRequest& request) {
     // ---- static front end (GET only, everything outside /api) ----
     if (method == "GET" && path.rfind("/api/", 0) != 0) {
         HttpResponse file;
-        if (HttpServer::serveStatic("web", path, file)) return file;
+        if (HttpServer::serveStatic(docRoot_, path, file)) return file;
         return HttpResponse::error(404, "file not found");
     }
 
@@ -616,6 +618,37 @@ HttpResponse ApiController::apiSaveMap(const HttpRequest& request) {
     Json ok = Json::makeObject();
     ok.members.put("ok", Json::makeBool(true));
     ok.members.put("name", Json::makeString(target));
+    return HttpResponse::json(200, ok.dump());
+}
+
+HttpResponse ApiController::apiResizeMap(const HttpRequest& request) {
+    HttpResponse denied;
+    if (requireAdmin(request, denied) == nullptr) return denied;
+    Json body;
+    if (!Json::parse(request.body, body)) return HttpResponse::error(400, "invalid JSON body");
+
+    // Missing fields keep the current size, so {"width":120} only widens the map.
+    const int width = body.getInt("width", map_->width());
+    const int height = body.getInt("height", map_->height());
+    if (width < campus::CampusMap::MIN_WIDTH || width > campus::CampusMap::MAX_WIDTH ||
+        height < campus::CampusMap::MIN_HEIGHT || height > campus::CampusMap::MAX_HEIGHT) {
+        return HttpResponse::error(
+            400, "size must be " + std::to_string(campus::CampusMap::MIN_WIDTH) + "-" +
+                     std::to_string(campus::CampusMap::MAX_WIDTH) + " wide and " +
+                     std::to_string(campus::CampusMap::MIN_HEIGHT) + "-" +
+                     std::to_string(campus::CampusMap::MAX_HEIGHT) + " high");
+    }
+    if (!map_->resize(width, height)) {
+        return HttpResponse::error(400, "a location lies outside that size - move it first");
+    }
+    dirty_ = true;
+    std::printf("[maps] resized '%s' to %dx%d\n", activeName_.c_str(), width, height);
+    std::fflush(stdout);
+
+    Json ok = Json::makeObject();
+    ok.members.put("ok", Json::makeBool(true));
+    ok.members.put("width", Json::makeNumber(width));
+    ok.members.put("height", Json::makeNumber(height));
     return HttpResponse::json(200, ok.dump());
 }
 

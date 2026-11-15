@@ -59,7 +59,8 @@ function fitCanvas() {
   }
 }
 
-// Campus world is roughly 62x20 grid units; pad and scale to fit.
+// World units -> canvas pixels (15 px per grid unit + padding); fitView() picks the zoom
+// so the active map (any size, e.g. the 58x84 default) fits the canvas.
 function worldToScreen(wx, wy) {
   const v = state.view;
   return {
@@ -364,6 +365,27 @@ $("saveAsBtn").addEventListener("click", () => {
   const name = $("newMapName").value.trim();
   if (!name) { mapMessage("Type the new name in the Name box first.", true); return; }
   saveMap(name).then(() => { $("newMapName").value = ""; });
+});
+
+// Grows (or shrinks) the active map in place; locations and connections are kept.
+async function resizeMap(width, height) {
+  try {
+    await api("/api/maps/resize", { method: "POST", body: JSON.stringify({ width, height }) });
+    await refreshMap();
+    fitView();
+    $("newMapW").value = state.map.width;
+    $("newMapH").value = state.map.height;
+    mapMessage(`Resized "${state.mapName}" to ${width}x${height}. Save to keep it.`);
+  } catch (err) {
+    mapMessage(err.message, true);
+  }
+}
+
+$("resizeMapBtn").addEventListener("click", () =>
+  resizeMap(parseInt($("newMapW").value, 10), parseInt($("newMapH").value, 10)));
+$("expandMapBtn").addEventListener("click", () => {
+  if (!state.map) return;
+  resizeMap(Math.min(200, state.map.width + 20), Math.min(100, state.map.height + 10));
 });
 
 $("fitBtn").addEventListener("click", fitView);

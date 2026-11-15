@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    web::ApiController controller;
+    web::ApiController controller("maps", docRoot);
     web::HttpServer server(port, docRoot,
                            [&controller](const web::HttpRequest& request) {
                                return controller.handle(request);

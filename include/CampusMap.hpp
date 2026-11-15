@@ -40,6 +40,10 @@ public:
     // clear() plus a new map size. Returns false (and changes nothing) when the
     // size is outside MIN_/MAX_WIDTH/HEIGHT.
     bool reset(int width, int height);
+    // Changes the map size but keeps every location and connection (e.g. to expand
+    // a map that ran out of room). Returns false (and changes nothing) when the size
+    // is out of range or a location would fall outside the new bounds.
+    bool resize(int width, int height);
 
     int width() const { return width_; }
     int height() const { return height_; }

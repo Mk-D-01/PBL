@@ -183,25 +183,25 @@ int main() {
     resp = bodyOf(http("GET", "/api/map"));
     CHECK(resp.find("\"locations\"") != std::string::npos, "GET /api/map has locations");
     CHECK(resp.find("\"connections\"") != std::string::npos, "GET /api/map has connections");
-    CHECK(resp.find("MainGate") != std::string::npos, "map contains MainGate");
-    CHECK(resp.find("Hostel-A") != std::string::npos, "map contains Hostel-A");
+    CHECK(resp.find("A-Entrance") != std::string::npos, "map contains A-Entrance");
+    CHECK(resp.find("Open Audi") != std::string::npos, "map contains Open Audi");
 
-    resp = bodyOf(http("GET", "/api/search?q=lib"));
-    CHECK(resp.find("Library") != std::string::npos, "search 'lib' finds Library");
+    resp = bodyOf(http("GET", "/api/search?q=lab"));
+    CHECK(resp.find("A-Lab-W") != std::string::npos, "search 'lab' finds A-Lab-W");
     resp = bodyOf(http("GET", "/api/search?q=zzz"));
     CHECK(resp.find("\"results\":[]") != std::string::npos, "search with no matches returns []");
 
-    resp = bodyOf(http("GET", "/api/route?from=MainGate&to=Hostel-A&metric=distance"));
-    CHECK(resp.find("\"reachable\":true") != std::string::npos, "Dijkstra finds MainGate->Hostel-A");
-    CHECK(resp.find("290") != std::string::npos, "Dijkstra total distance is 290 m");
-    resp = bodyOf(http("GET", "/api/route?from=MainGate&to=Hostel-A&metric=hops"));
-    CHECK(resp.find("\"reachable\":true") != std::string::npos, "BFS finds MainGate->Hostel-A");
-    resp = bodyOf(http("GET", "/api/route?from=Nowhere&to=Hostel-A"));
+    resp = bodyOf(http("GET", "/api/route?from=A-Entrance&to=B-LT-SE&metric=distance"));
+    CHECK(resp.find("\"reachable\":true") != std::string::npos, "Dijkstra finds A-Entrance->B-LT-SE");
+    CHECK(resp.find("117") != std::string::npos, "Dijkstra total distance is 117 m");
+    resp = bodyOf(http("GET", "/api/route?from=A-Entrance&to=B-LT-SE&metric=hops"));
+    CHECK(resp.find("\"reachable\":true") != std::string::npos, "BFS finds A-Entrance->B-LT-SE");
+    resp = bodyOf(http("GET", "/api/route?from=Nowhere&to=B-LT-SE"));
     CHECK(resp.find("error") != std::string::npos, "route with unknown source is 404");
 
-    resp = bodyOf(http("GET", "/api/traverse?from=MainGate&order=bfs"));
+    resp = bodyOf(http("GET", "/api/traverse?from=A-Entrance&order=bfs"));
     CHECK(resp.find("\"visit\"") != std::string::npos, "BFS traversal works");
-    resp = bodyOf(http("GET", "/api/traverse?from=MainGate&order=dfs"));
+    resp = bodyOf(http("GET", "/api/traverse?from=A-Entrance&order=dfs"));
     CHECK(resp.find("\"visit\"") != std::string::npos, "DFS traversal works");
 
     resp = bodyOf(http("GET", "/api/info"));
@@ -239,7 +239,7 @@ int main() {
                        "{\"from\":" + newId + ",\"to\":2,\"d\":60,\"label\":\"TestPath\"}", adminCookie));
     CHECK(resp.find("\"ok\":true") != std::string::npos, "admin adds a connection");
 
-    resp = bodyOf(http("GET", "/api/route?from=Robotics%20Lab&to=Library&metric=distance"));
+    resp = bodyOf(http("GET", "/api/route?from=Robotics%20Lab&to=A-Cr1&metric=distance"));
     CHECK(resp.find("\"reachable\":true") != std::string::npos, "route through new connection works");
 
     resp = bodyOf(http("DELETE", "/api/connections?from=" + newId + "&to=2", "", adminCookie));
@@ -301,6 +301,23 @@ int main() {
     resp = bodyOf(http("GET", "/api/maps"));
     CHECK(has(resp, "\"dirty\":true"), "edits mark the map dirty");
 
+    // ---- expanding a map in place ----
+    http("POST", "/api/maps/resize", R"({"width":80,"height":30})", userCookie, &statusLine);
+    CHECK(has(statusLine, "403"), "resize is admin-only");
+    http("POST", "/api/maps/resize", R"({"width":30})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "resize refuses to cut off a location (C sits at x 37)");
+    http("POST", "/api/maps/resize", R"({"width":80,"height":500})", adminCookie, &statusLine);
+    CHECK(has(statusLine, "400"), "resize rejects an out-of-range size");
+    resp = bodyOf(http("POST", "/api/maps/resize", R"({"width":80,"height":30})", adminCookie));
+    CHECK(has(resp, "\"ok\":true"), "admin expands the map");
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"width\":80") && has(resp, "\"height\":30") && has(resp, "\"x\":37") &&
+              has(resp, "\"name\":\"A\""),
+          "expanded map keeps its locations where they were");
+    http("POST", "/api/locations", R"({"name":"D","type":"F","detail":"d","x":70,"y":25})", adminCookie);
+    resp = bodyOf(http("GET", "/api/map"));
+    CHECK(has(resp, "\"x\":70") && has(resp, "\"y\":25"), "new room is usable after expanding");
+
     http("POST", "/api/connections", R"({"from":0,"to":2,"d":50,"label":"walk"})", adminCookie);
     http("DELETE", "/api/locations/1", "", adminCookie);  // leaves a hole at id 1
     resp = bodyOf(http("POST", "/api/maps/save", "", adminCookie));
@@ -314,11 +331,12 @@ int main() {
     resp = bodyOf(http("POST", "/api/maps/select", R"({"name":"default"})", adminCookie));
     CHECK(has(resp, "\"ok\":true"), "admin switches to the default map");
     resp = bodyOf(http("GET", "/api/map"));
-    CHECK(has(resp, "\"name\":\"default\"") && has(resp, "MainGate") && !has(resp, "\"name\":\"A\""),
+    CHECK(has(resp, "\"name\":\"default\"") && has(resp, "A-Entrance") && !has(resp, "\"name\":\"A\""),
           "switching shows the other map's data");
     resp = bodyOf(http("POST", "/api/maps/select", R"({"name":"scratch"})", adminCookie));
     resp = bodyOf(http("GET", "/api/map"));
-    CHECK(has(resp, "\"width\":40") && has(resp, "\"name\":\"A\"") && has(resp, "\"name\":\"C\"") &&
+    CHECK(has(resp, "\"width\":80") && has(resp, "\"height\":30") && has(resp, "\"name\":\"A\"") &&
+              has(resp, "\"name\":\"C\"") &&
               !has(resp, "\"name\":\"B\""),
           "saved map reloads with its size and locations");
     CHECK(has(resp, "\"id\":2"), "reload keeps ids stable across the deleted slot");
@@ -347,7 +365,7 @@ int main() {
     http("POST", "/api/maps/select", R"({"name":"default"})", adminCookie, &statusLine);
     CHECK(has(statusLine, "200"), "built-in default can be selected without a saved file");
     resp = bodyOf(http("GET", "/api/map"));
-    CHECK(has(resp, "MainGate") && has(resp, "\"width\":62"), "selecting default rebuilds the built-in campus");
+    CHECK(has(resp, "A-Entrance") && has(resp, "\"width\":58"), "selecting default rebuilds the built-in campus");
 
     // Leave the default campus active for the remaining checks.
 

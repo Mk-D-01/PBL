@@ -1,38 +1,37 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <string>
-#include <type_traits>
+using namespace std;
 
 namespace ds {
 
-// FNV-1a 64-bit hash for string keys.
-inline std::size_t hashOf(const std::string& text) {
-    std::size_t hash = 14695981039346656037ULL;
-    for (char ch : text) {
-        hash ^= static_cast<unsigned char>(ch);
-        hash *= 1099511628211ULL;
+// Hash for string keys (FNV-1a): mixes every character into the result.
+inline size_t hashOf(const string& text) {
+    size_t hash = 14695981039346656037ULL;
+    for (size_t i = 0; i < text.size(); i++) {
+        hash = hash ^ (unsigned char)text[i];
+        hash = hash * 1099511628211ULL;
     }
     return hash;
 }
 
-// MurmurHash3 64-bit finalizer for integral keys.
-template <typename T>
-inline std::enable_if_t<std::is_integral<T>::value, std::size_t> hashOf(T value) {
-    std::size_t x = static_cast<std::size_t>(value);
-    x ^= x >> 33;
-    x *= 0xff51afd7ed558ccdULL;
-    x ^= x >> 33;
-    x *= 0xc4ceb9fe1a85ec53ULL;
-    x ^= x >> 33;
+// Hash for integer keys (int, long, ...): scrambles the bits so that
+// consecutive numbers do not land in consecutive buckets.
+inline size_t hashOf(long long value) {
+    size_t x = (size_t)value;
+    x = x ^ (x >> 33);
+    x = x * 0xff51afd7ed558ccdULL;
+    x = x ^ (x >> 33);
+    x = x * 0xc4ceb9fe1a85ec53ULL;
+    x = x ^ (x >> 33);
     return x;
 }
 
-// Identity-based hash for pointer keys.
+// Hash for pointer keys: uses the address as a number.
 template <typename T>
-inline std::enable_if_t<std::is_pointer<T>::value, std::size_t> hashOf(T pointer) {
-    return hashOf(reinterpret_cast<std::uintptr_t>(pointer));
+inline size_t hashOf(T* pointer) {
+    return hashOf((long long)(size_t)pointer);
 }
 
 }  // namespace ds

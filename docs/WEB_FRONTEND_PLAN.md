@@ -79,7 +79,7 @@ Every admin endpoint returns `401/403` JSON error for user-role sessions.
    Admin panel hidden unless `whoami` says `role=admin`.
 7. **Makefile target** `mapgen_web` + `build.bat` lines; README updates.
 8. **Tests**: `tests/web_test.cpp` — raw-socket HTTP requests against a loopback
-   server: login, search, route correctness (MainGate→Hostel-A = 290 m), admin guard (403), CRUD round-trip.
+   server: login, search, route correctness (originally MainGate→Hostel-A = 290 m; now A-Entrance→B-LT-SE = 117 m on the floor-plan map), admin guard (403), CRUD round-trip.
 9. **Polish**: 404/405 handling, URL decoding for `q`/`from`/`to` query params, 404 on unknown static files.
 
 ## 6. Role matrix (final, confirmed)

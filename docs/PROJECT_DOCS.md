@@ -42,7 +42,7 @@ or `std::priority_queue` in the engine. That is the core course requirement.
                                         └──────────────────────────────┘
 ```
 
-- The **server** starts with a demo campus of 12 locations and 20 walkways (seeded by `MapGenerator`).
+- The **server** starts with the default map of 30 locations and 38 corridor segments (Block A + Block B floor plans, seeded by `MapGenerator`).
 - Every click in the browser becomes a small HTTP request (`/api/map`, `/api/route`, …).
 - The **ApiController** translates those requests into calls on the graph engine and returns JSON.
 - The browser draws the graph on an HTML canvas: circles = locations, lines = walkways.
@@ -89,7 +89,7 @@ Zero third-party dependencies. The whole project compiles to two binaries:
 | `Connection.hpp` | One undirected edge: destination id, distance (metres), walkway label. |
 | `Route.hpp` | Result of a route query: path (ids), total distance, hop count, plus the `HeapEntry` used inside Dijkstra's heap. |
 | `CampusMap.hpp/.cpp` | **The graph engine.** Owns the id-indexed location table (`DynamicArray`), the name→id `HashMap`, and adjacency (`DynamicArray` of `LinkedList<Connection>`). Implements add/remove/update/search, connect/disconnect (rejects duplicates, self-loops, bad ids), stable-id deletion, the ASCII map (Bresenham lines on a char grid), and the info reports. |
-| `MapGenerator.hpp/.cpp` | Seeds the demo campus: 12 placed locations and 20 labelled walkways, ids assigned in creation order (MainGate = 0). Clears the map first so it can be re-run. |
+| `MapGenerator.hpp/.cpp` | Seeds the default map from the floor-plan sketches in `frontWiew/`: Block A (5 classrooms, 2 labs, Wi-Fi zone, lift, 4 staircases) above Block B (4 lecture theatres, 4 classrooms, Open Audi, washrooms), joined by the "Link Passage". 30 locations / 38 labelled corridor segments on a 58x84 map; ids assigned in creation order (A-Entrance = 0). Resets the map first so it can be re-run. |
 
 ### 4.3 Algorithms — `Navigation.hpp/.cpp`, `Route.hpp`
 
@@ -123,8 +123,8 @@ See §5 below for how each algorithm works.
 
 | File | What it does |
 |---|---|
-| `self_test.cpp` | 91 assertions: every data structure operation, graph CRUD, edge symmetry, BFS/Dijkstra optimality, removal cleanup, scripted UI run. |
-| `web_test.cpp` | 41 assertions driven through **real sockets**: login/logout, 401/403 role guards, map/search/route correctness (MainGate→Hostel-A = 290 m), full admin CRUD round-trip, static file serving. |
+| `self_test.cpp` | 107 assertions: every data structure operation, graph CRUD, edge symmetry, BFS/Dijkstra optimality, removal cleanup, scripted UI run. |
+| `web_test.cpp` | 77 assertions driven through **real sockets**: login/logout, 401/403 role guards, map/search/route correctness (A-Entrance→B-LT-SE = 117 m), full admin CRUD round-trip, static file serving. |
 
 ---
 
@@ -159,15 +159,15 @@ files end-to-end (design → code → tests). LOC counts are from `wc -l`.
 
 ### Role 3 — Navigation & Algorithms Engineer
 - **Owns:** `Navigation.hpp/.cpp`, `Route.hpp` — **280 LOC (~6% code, heavy on design/testing)**
-- **Did:** implemented BFS (Queue), Dijkstra (MinHeap with decrease-key + tie-breaking for determinism), DFS (Stack), and both traversal orders; defined the `Route`/`HeapEntry` structures; proved optimality in tests (e.g. MainGate→Hostel-A = 290 m for all-pairs scenarios).
+- **Did:** implemented BFS (Queue), Dijkstra (MinHeap with decrease-key + tie-breaking for determinism), DFS (Stack), and both traversal orders; defined the `Route`/`HeapEntry` structures; proved optimality in tests (e.g. A-Entrance→B-LT-SE = 117 m in 6 hops, plus all-pairs reachability).
 
 ### Role 4 — Console UX & Quality Engineer
 - **Owns:** `Menu.hpp/.cpp`, `main.cpp`, `tests/self_test.cpp` — **820 LOC (~17%)**
-- **Did:** built the 10-option menu with id-or-name addressing, input validation, and pipe-friendly scripted runs; wrote the 91-assertion self-test suite covering data structures, graph operations, algorithms, and UI flows.
+- **Did:** built the 10-option menu with id-or-name addressing, input validation, and pipe-friendly scripted runs; wrote the 107-assertion self-test suite covering data structures, graph operations, algorithms, and UI flows.
 
 ### Role 5 — Web Backend Engineer (server + API + security)
 - **Owns:** `include/web/*`, `src/web/*`, `web_main.cpp`, `tests/web_test.cpp` — **1574 LOC (~32%)**
-- **Did:** wrote the raw-socket HTTP server (parsing, cookies, static files, MIME, path safety); hand-rolled the JSON parser/writer; built the REST API layer over the engine; implemented session auth with role guards (401/403) using `ds::HashMap`; wrote the 41-check socket-level test suite.
+- **Did:** wrote the raw-socket HTTP server (parsing, cookies, static files, MIME, path safety); hand-rolled the JSON parser/writer; built the REST API layer over the engine; implemented session auth with role guards (401/403) using `ds::HashMap`; wrote the 77-check socket-level test suite.
 
 ### Role 6 — Frontend & Interaction Designer (browser app)
 - **Owns:** `web/index.html`, `web/style.css`, `web/app.js` — **767 LOC (~15%)**
@@ -196,8 +196,8 @@ just lines.*
 
 ```bash
 build.bat            # build everything (Windows)
-make tests           # console engine: 91 checks
-make webtests        # web API: 41 checks
+make tests           # console engine: 107 checks
+make webtests        # web API: 77 checks
 make serve           # start web server → http://localhost:18080
 ./mapgen.exe         # console app (10-option menu)
 ```

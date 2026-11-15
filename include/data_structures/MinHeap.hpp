@@ -1,97 +1,98 @@
 #pragma once
 
 #include <cstddef>
-#include <stdexcept>
-#include <utility>
-
 #include "DynamicArray.hpp"
-#include "Hash.hpp"
+using namespace std;
 
 namespace ds {
 
-// MinHeap: array-backed binary min-heap implemented from scratch.
-// Used as the priority queue for Dijkstra's shortest-path algorithm.
+// MinHeap: binary min-heap stored in an array (priority queue for Dijkstra).
+// For the node at index i: parent = (i-1)/2, children = 2i+1 and 2i+2.
 //
-// Requirements on T:
-//   - comparable with < (smaller = higher priority), and
-//   - equality-comparable with == so decreaseKey can locate entries.
+// T needs operator< (smaller = higher priority) and operator== (so that
+// decreaseKey can find the entry).
+// Note: call empty() before extractMin()/peekMin().
 template <typename T>
 class MinHeap {
-public:
-    MinHeap() = default;
+    DynamicArray<T> data_;
 
-    explicit MinHeap(std::size_t initialCapacity) { data_.reserve(initialCapacity); }
+    void swapItems(size_t a, size_t b) {
+        T temp = data_[a];
+        data_[a] = data_[b];
+        data_[b] = temp;
+    }
+
+    // moves the item at index up until its parent is not bigger
+    void siftUp(size_t index) {
+        while (index > 0) {
+            size_t parent = (index - 1) / 2;
+            if (!(data_[index] < data_[parent]))
+                break;
+            swapItems(index, parent);
+            index = parent;
+        }
+    }
+
+    // moves the item at index down until both children are not smaller
+    void siftDown(size_t index) {
+        while (true) {
+            size_t smallest = index;
+            size_t left = 2 * index + 1;
+            size_t right = 2 * index + 2;
+            if (left < data_.size() && data_[left] < data_[smallest])
+                smallest = left;
+            if (right < data_.size() && data_[right] < data_[smallest])
+                smallest = right;
+            if (smallest == index)
+                break;
+            swapItems(index, smallest);
+            index = smallest;
+        }
+    }
+
+public:
+    MinHeap() {}
+
+    MinHeap(size_t initialCapacity) {
+        data_.reserve(initialCapacity);
+    }
 
     void push(const T& value) {
         data_.pushBack(value);
         siftUp(data_.size() - 1);
     }
-    void push(T&& value) {
-        data_.pushBack(std::move(value));
-        siftUp(data_.size() - 1);
-    }
 
-    // Empties the heap and returns its minimum element.
+    // removes and returns the smallest element
     T extractMin() {
-        if (data_.empty()) throw std::out_of_range("MinHeap::extractMin on empty heap");
-        T minValue = std::move(data_[0]);
-        data_[0] = std::move(data_.back());
+        T minValue = data_[0];
+        data_[0] = data_.back();
         data_.popBack();
-        if (!data_.empty()) siftDown(0);
+        if (!data_.empty())
+            siftDown(0);
         return minValue;
     }
 
-    const T& peekMin() const {
-        if (data_.empty()) throw std::out_of_range("MinHeap::peekMin on empty heap");
-        return data_[0];
-    }
+    const T& peekMin() const { return data_[0]; }
 
-    // Replaces the existing entry equal to `target` with `newValue` and
-    // restores heap order (used to lower a key). Returns false when `target`
-    // is absent or `newValue` would not lower the key (heap is left intact).
+    // Replaces the entry equal to target with newValue (which must be smaller)
+    // and fixes the heap. Returns false if target is missing or newValue is
+    // not smaller - the heap is left unchanged in that case.
     bool decreaseKey(const T& target, const T& newValue) {
-        const std::size_t index = indexOf(target);
-        if (index == DynamicArray<T>::npos) return false;
-        if (!(newValue < target)) return false;  // only lowering is allowed
+        size_t index = data_.indexOf(target);
+        if (index == DynamicArray<T>::npos)
+            return false;
+        if (!(newValue < target))
+            return false;
         data_[index] = newValue;
         siftUp(index);
         return true;
     }
 
-    bool contains(const T& value) const { return indexOf(value) != DynamicArray<T>::npos; }
+    bool contains(const T& value) const { return data_.contains(value); }
 
-    std::size_t size() const { return data_.size(); }
+    size_t size() const { return data_.size(); }
     bool empty() const { return data_.empty(); }
     void clear() { data_.clear(); }
-
-private:
-    static std::size_t parent(std::size_t i) { return (i - 1) / 2; }
-    static std::size_t leftChild(std::size_t i) { return 2 * i + 1; }
-    static std::size_t rightChild(std::size_t i) { return 2 * i + 2; }
-
-    std::size_t indexOf(const T& value) const { return data_.indexOf(value); }
-
-    void siftUp(std::size_t index) {
-        while (index > 0 && data_[index] < data_[parent(index)]) {
-            std::swap(data_[index], data_[parent(index)]);
-            index = parent(index);
-        }
-    }
-
-    void siftDown(std::size_t index) {
-        for (;;) {
-            std::size_t smallest = index;
-            std::size_t left = leftChild(index);
-            std::size_t right = rightChild(index);
-            if (left < data_.size() && data_[left] < data_[smallest]) smallest = left;
-            if (right < data_.size() && data_[right] < data_[smallest]) smallest = right;
-            if (smallest == index) break;
-            std::swap(data_[index], data_[smallest]);
-            index = smallest;
-        }
-    }
-
-    ds::DynamicArray<T> data_;
 };
 
 }  // namespace ds

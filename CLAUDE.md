@@ -15,8 +15,8 @@ one engine: a 10-option console menu (`mapgen`) and an HTTP/JSON server + vanill
 ```powershell
 $env:PATH="D:\C\ucrt64\bin;$env:PATH"
 cmd /c ".\build.bat"            # ~60 s, 0 warnings; builds all 4 exes into repo root
-.\mapgen_tests.exe              # 91 checks, exit 0
-.\mapgen_web_tests.exe          # 41 checks, exit 0 (binds port 18099 itself)
+.\mapgen_tests.exe              # 107 checks, exit 0
+.\mapgen_web_tests.exe          # 77 checks, exit 0 (binds port 18099 itself)
 .\mapgen.exe                    # console menu
 .\mapgen_web.exe --port 18080 --root web   # http://localhost:18080  (see caveat on --root)
 ```
@@ -36,11 +36,14 @@ Menu (console) ------------------------------------->                           
   (both half-edges stored); also owns a 62x20 ASCII grid (Bresenham) used only by console `renderMap()`.
 - `Location` hierarchy: `Building` (floors), `Facility` (service text), `Gate` (open/closed); `kind()`/`describe()` virtual.
 - `Navigation` is a `friend` of `CampusMap` and reads `adjacency_` directly. BFS=hops, Dijkstra (MinHeap + decreaseKey)=metres, DFS=reachability/traversal.
-- `MapGenerator::generate` clears and seeds 12 locations / 20 edges (MainGate = id 0).
+- `MapGenerator::generate` resets to 58x84 and seeds the floor plans in `frontWiew/` (Block A on top,
+  Block B below, joined by "Link Passage"): 30 locations / 38 edges, A-Entrance = id 0. Floor-plan images: Block A = `frontWiew/er.png`,
+  Block B = `frontWiew/Screenshot ...png`; `frontWiew/image.png` is the outdoor campus -> saved map `maps/outside.json`
+  (9 locations / 15 assumed walkways; select via `/api/maps/select`).
 - Web: `HttpServer` (raw Winsock/BSD sockets, single-threaded, one request/connection, loopback only),
   `Json` (hand-rolled parser/writer), `ApiController` (route table in `handle()`, cookie sessions in `ds::HashMap`).
 - Endpoints: `/login /logout /api/whoami /api/map /api/search /api/route /api/info /api/traverse` (public),
-  admin (401/403 guarded): `/api/generate`, `/api/locations` POST/PUT, `/api/locations/{id}` DELETE, `/api/connections` POST/DELETE.
+  admin (401/403 guarded): `/api/generate`, `/api/maps` POST, `/api/maps/select|save|resize`, `/api/locations` POST/PUT, `/api/locations/{id}` DELETE, `/api/connections` POST/DELETE.
 
 ## Layout
 ```
@@ -63,8 +66,8 @@ Office autosave (presentation, not code); its `~$` lock file shows as deleted in
 - State: engine holds all state in one `CampusMap`; frontend keeps a global `state` object and redraws the canvas wholesale after each mutation (`refr`eshMap()`).
 - Comments are plentiful, explain "why", ASCII only in code.
 
-## Known issues (see findings; none fixed yet)
-1. **Real bug:** `Navigation::valid()` compares ids to `locationCount()` (live count, not slot count) — after any deletion, routes touching the highest ids silently fail.
-2. Server is blocked by any idle TCP connection (no recv timeout, single-threaded).
-3. `--root` flag is ignored by the API (`"web"` hardcoded in `ApiController.cpp:131`).
-4. Web coordinates are silently clamped to the ASCII grid (x≤59, y≤18) by `CampusMap`.
+## Known issues
+Fixed (2026-10-19): `Navigation::valid()` slot-vs-count bug, idle-connection blocking (SO_RCVTIMEO),
+`--root` ignored by the API. Coordinates are clamped to the *active map's* bounds (`minX..maxX`,
+`minY..maxY`); maps are 20x10..200x100 and can be grown in place via `CampusMap::resize()` /
+`POST /api/maps/resize` (refuses sizes that would cut off a location).
