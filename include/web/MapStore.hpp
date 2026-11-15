@@ -11,8 +11,8 @@ namespace web {
 //
 // File format (version 1):
 //   {"version":1,"name":"...","width":62,"height":20,
-//    "locations":[{"id":0,"name":"MainGate","type":"G","x":3,"y":18,"detail":""},...],
-//    "connections":[{"from":0,"to":2,"d":90,"label":"Main Walkway"},...]}
+//    "locations":[{"id":0,"name":"A-Entrance","type":"G","x":31,"y":39,"detail":""},...],
+//    "connections":[{"from":0,"to":16,"d":13,"label":"Link Passage"},...]}
 // Location ids are stored as-is (gaps from deleted locations included), so ids
 // stay stable across save/load - routes and connections keep their meaning.
 class MapStore {

@@ -18,7 +18,7 @@ Requires g++ (MinGW-w64 / MSYS2 on Windows) or any C++17 compiler.
 ```bash
 # Option 1: make
 make            # builds ./mapgen
-make tests      # builds and runs the self-test suite (91 checks)
+make tests      # builds and runs the self-test suite (107 checks)
 make run        # build + start the interactive menu
 
 # Option 2: Windows batch script
@@ -58,7 +58,7 @@ requirement intact. It listens on `127.0.0.1` only and handles one request
 per connection, single-threaded (fine for a demo; documented limitation).
 
 ```bash
-make webtests   # builds and runs the web API suite (41 checks over real sockets)
+make webtests   # builds and runs the web API suite (77 checks over real sockets)
 ```
 
 ## The 10-Option Menu
@@ -98,8 +98,8 @@ src/                      implementations of the above
 include/web/              HTTP layer: HttpServer, hand-rolled JSON, ApiController
 src/web/                  implementations of the above
 web/                      browser front end (index.html, style.css, app.js)
-tests/self_test.cpp       91 assertions: data structures, graph ops, algorithms, UI
-tests/web_test.cpp        41 assertions: HTTP API, auth/roles, CRUD round-trips
+tests/self_test.cpp       107 assertions: data structures, graph ops, algorithms, UI
+tests/web_test.cpp        77 assertions: HTTP API, auth/roles, CRUD round-trips
 ```
 
 ## Data Structures Used (all hand-written)
@@ -134,23 +134,44 @@ tests/web_test.cpp        41 assertions: HTTP API, auth/roles, CRUD round-trips
 | DFS (iterative)           | connectivity check ("is there a path") | Stack + HashMap           |
 | Bresenham line drawing    | renders walkways on the ASCII map grid | DynamicArray grid         |
 
-## Generated Demo Campus
+## Generated Default Map
 
-`MapGenerator::generate` seeds 12 locations — MainGate, EastGate, CSE/ECE/ME/
-Admin blocks, Library, Cafeteria, Hostel-A, MedicalCtr, SportsField, Parking —
-and 20 labelled walkway connections. Example (MainGate → Hostel-A):
+`MapGenerator::generate` resets the map to 58x84 and seeds the two floor plans
+sketched in `frontWiew/`, stacked vertically and joined by a "Link Passage":
+
+- **Block A** (`frontWiew/er.png`) - A-Cr1..A-Cr5, A-Lab-W, A-Lab-E,
+  WiFi Zone, A-Lift, four staircases, two corridor corners, A-Entrance (id 0).
+- **Block B** (`frontWiew/Screenshot ...png`) - four lecture theatres
+  (B-LT-NW/NE/SW/SE), B-Cr1..B-Cr4, Open Audi, two staircases, male/female
+  washrooms, B-Entrance.
+
+30 locations and 38 labelled corridor segments in total. Example
+(A-Entrance -> B-LT-SE):
 
 ```
 Route [fewest stops (BFS)]:
-  1. MainGate
-  2. Admin-Block
-  3. Cafeteria
-  4. Hostel-A
-  Stops: 3, Total distance: 290 m
+  1. A-Entrance
+  2. B-Entrance
+  3. B-Cr2
+  4. B-LT-NE
+  5. B-Cr3
+  6. B-Cr4
+  7. B-LT-SE
+  Stops: 6, Total distance: 117 m
 ```
 
-Dijkstra returns the same route here (80 + 120 + 90 m); on other queries it
-prefers shorter total distance even when that means more stops.
+Dijkstra returns the same route here; on other queries it prefers shorter
+total distance even when that means more stops.
+
+### Saved map: `outside`
+
+`maps/outside.json` is the outdoor campus sketched in `frontWiew/image.png`:
+Gate 1, Gate 2, Gate 3 (labelled "Gate #" in the sketch), Tuck Shop, Gehu
+Building, Main Ground, Sports Arena, Volley Ball Court and Basketball Court on
+an 84x74 map, with 15 walkways. The sketch draws no paths, so the walkways
+link neighbouring places and their lengths are estimates (straight-line grid
+distance x 2 m). In the web UI, log in as admin and pick **outside** in the map
+list (or `POST /api/maps/select {"name":"outside"}`).
 
 ## Notes & Assumptions
 

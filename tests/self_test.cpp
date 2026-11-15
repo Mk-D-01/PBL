@@ -195,9 +195,9 @@ void testMapOperations() {
 void testMapGenerator() {
     campus::CampusMap map;
     campus::MapGenerator::generate(map);
-    require(map.locationCount() == 12, "generator seeds 12 locations");
-    require(map.edgeCount() == 20, "generator seeds 20 connections");
-    require(map.searchByName("MainGate") != nullptr && map.searchByName("Library") != nullptr,
+    require(map.locationCount() == 30, "generator seeds 30 locations");
+    require(map.edgeCount() == 38, "generator seeds 38 connections");
+    require(map.searchByName("A-Entrance") != nullptr && map.searchByName("Open Audi") != nullptr,
             "generator landmark names");
 
     bool allConnected = true;
@@ -221,22 +221,22 @@ void testNavigation() {
     campus::MapGenerator::generate(map);
     const campus::Navigation nav(map);
 
-    const int mainGate = map.searchByName("MainGate")->id();
-    const int eastGate = map.searchByName("EastGate")->id();
-    const int hostel = map.searchByName("Hostel-A")->id();
-    const int parking = map.searchByName("Parking")->id();
+    const int mainGate = map.searchByName("A-Entrance")->id();
+    const int openAudi = map.searchByName("Open Audi")->id();
+    const int hostel = map.searchByName("B-LT-SE")->id();  // far corner of Block B
+    const int bGate = map.searchByName("B-Entrance")->id();
 
     // BFS fewest stops.
     const campus::Route bfs = nav.shortestRouteByHops(mainGate, hostel);
-    require(bfs.reachable, "BFS finds route MainGate->Hostel-A");
-    require(bfs.hops == 3, "BFS hop count is minimal (3)");
+    require(bfs.reachable, "BFS finds route A-Entrance->B-LT-SE");
+    require(bfs.hops == 6, "BFS hop count is minimal (6)");
     require(bfs.path.front() == mainGate && bfs.path.back() == hostel, "BFS path endpoints");
 
     // Dijkstra shortest distance.
     const campus::Route dij = nav.shortestRouteByDistance(mainGate, hostel);
-    require(dij.reachable, "Dijkstra finds route MainGate->Hostel-A");
-    require(dij.totalDistance == 290, "Dijkstra total distance 290 m");
-    require(dij.hops == 3, "Dijkstra route uses 3 edges");
+    require(dij.reachable, "Dijkstra finds route A-Entrance->B-LT-SE");
+    require(dij.totalDistance == 117, "Dijkstra total distance 117 m");
+    require(dij.hops == 6, "Dijkstra route uses 6 edges");
     require(dij.totalDistance <= bfs.totalDistance, "Dijkstra distance <= BFS distance");
 
     // Both algorithms agree on reachability for every pair.
@@ -255,8 +255,8 @@ void testNavigation() {
     require(allPairsReachable, "campus is fully connected (all pairs)");
 
     // Adjacent nodes: direct edge is optimal.
-    const campus::Route adjacent = nav.shortestRouteByDistance(mainGate, parking);
-    require(adjacent.totalDistance == 60 && adjacent.hops == 1, "adjacent route uses the edge");
+    const campus::Route adjacent = nav.shortestRouteByDistance(mainGate, bGate);
+    require(adjacent.totalDistance == 13 && adjacent.hops == 1, "adjacent route uses the edge");
 
     // Invalid ids and self-route.
     require(!nav.shortestRouteByDistance(-1, hostel).reachable, "Dijkstra rejects bad source");
@@ -265,11 +265,11 @@ void testNavigation() {
     require(self.reachable && self.hops == 0 && self.path.size() == 1, "self route is trivial");
 
     // DFS connectivity and traversals.
-    require(nav.pathExists(mainGate, eastGate), "DFS pathExists");
+    require(nav.pathExists(mainGate, openAudi), "DFS pathExists");
     const ds::DynamicArray<int> bfsOrder = nav.traverseBFS(mainGate);
-    require(bfsOrder.size() == 12 && bfsOrder.front() == mainGate, "BFS traversal visits all 12");
+    require(bfsOrder.size() == 30 && bfsOrder.front() == mainGate, "BFS traversal visits all 30");
     const ds::DynamicArray<int> dfsOrder = nav.traverseDFS(mainGate);
-    require(dfsOrder.size() == 12 && dfsOrder.front() == mainGate, "DFS traversal visits all 12");
+    require(dfsOrder.size() == 30 && dfsOrder.front() == mainGate, "DFS traversal visits all 30");
 
     // Disconnect a bridge and verify isolation is detected.
     campus::CampusMap sparse;
@@ -283,7 +283,7 @@ void testNavigation() {
     require(!sparseNav.shortestRouteByHops(s1, s2).reachable, "BFS unreachable after disconnect");
     require(!sparseNav.shortestRouteByDistance(s1, s2).reachable,
             "Dijkstra unreachable after disconnect");
-    require(nav.traverseBFS(mainGate).size() == 12, "BFS order stable after queries");
+    require(nav.traverseBFS(mainGate).size() == 30, "BFS order stable after queries");
 
     // Regression: ids are slot indices, so after deleting a low id the highest id is
     // still valid even though it is >= the live location count.
@@ -345,10 +345,10 @@ void testMenuScripted() {
         "16\n"            // 3: y
         "lab\n"           // 5: keyword
         "DemoLab\n"       // 7: first location
-        "Library\n"       // 7: second location
+        "WiFi Zone\n"     // 7: second location
         "100\n"           // 7: distance
         "Test Path\n"     // 7: label
-        "MainGate\n"      // 8: source
+        "A-Entrance\n"    // 8: source
         "DemoLab\n"       // 8: destination
         "d\n"             // 8: metric
         "DemoLab\n"       // 6: id or name
@@ -366,8 +366,8 @@ void testMenuScripted() {
 
     menu.runAction(3);  // add DemoLab
     menu.runAction(5);  // search "lab"
-    menu.runAction(7);  // connect DemoLab <-> Library
-    menu.runAction(8);  // find route MainGate -> DemoLab (Dijkstra)
+    menu.runAction(7);  // connect DemoLab <-> WiFi Zone
+    menu.runAction(8);  // find route A-Entrance -> DemoLab (Dijkstra)
     menu.runAction(6);  // rename DemoLab -> RoboticsLab
     menu.runAction(4);  // remove RoboticsLab
     menu.runAction(11); // invalid choice

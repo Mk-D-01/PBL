@@ -59,7 +59,8 @@ function fitCanvas() {
   }
 }
 
-// Campus world is roughly 62x20 grid units; pad and scale to fit.
+// World units -> canvas pixels (15 px per grid unit + padding); fitView() picks the zoom
+// so the active map (any size, e.g. the 58x84 default) fits the canvas.
 function worldToScreen(wx, wy) {
   const v = state.view;
   return {
